@@ -509,3 +509,68 @@ def test_stats_missing() -> None:
     """Missing stats are None."""
     stats = mapper.map_stats({})
     assert stats.cpu_load is None and stats.memory_load is None
+
+
+# real MX2000 1.1.x firmware shape: no nodeType, nodes are Infrastructure ------
+
+
+def _infra(device_id: str, serial: str, name: str, *, authority: bool = False) -> dict:
+    return {
+        "deviceID": device_id,
+        "friendlyName": name,
+        "isAuthority": authority,
+        "knownMACAddresses": [f"AA:BB:CC:00:00:{serial[-2:]}"],
+        "connections": [{"ipAddress": "192.0.2.5"}],
+        "properties": [{"name": "userDeviceName", "value": name}],
+        "model": {"deviceType": "Infrastructure", "modelNumber": "MX2000"},
+        "unit": {"serialNumber": serial, "firmwareVersion": "1.1.7"},
+    }
+
+
+def test_infrastructure_nodes_without_node_type() -> None:
+    """Four Infrastructure devices become four nodes; clients stay clients."""
+    phone = {
+        "deviceID": "p1",
+        "knownMACAddresses": ["11:22:33:44:55:66"],
+        "connections": [],
+        "model": {"deviceType": "Phone"},
+        "unit": {},
+    }
+    output = {
+        "devices": [
+            _infra("a", "S1", "Hall"),
+            phone,
+            _infra("b", "S2", "Dining"),
+            _infra("c", "S3", "Study"),
+            _infra("d", "S4", "Loft"),
+        ]
+    }
+    nodes, clients = mapper.map_devices(
+        output, {}, include_clients=True, primary_serial="S2"
+    )
+    assert [n.serial for n in nodes] == ["S1", "S2", "S3", "S4"]
+    assert [n.role for n in nodes] == [
+        NodeRole.CHILD,
+        NodeRole.PRIMARY,
+        NodeRole.CHILD,
+        NodeRole.CHILD,
+    ]
+    assert [n.name for n in nodes] == ["Hall", "Dining", "Study", "Loft"]
+    assert len(clients) == 1
+
+
+def test_infrastructure_primary_from_authority_flag() -> None:
+    """Without a known serial, isAuthority marks the primary."""
+    output = {
+        "devices": [_infra("a", "S1", "A"), _infra("b", "S2", "B", authority=True)]
+    }
+    nodes, _ = mapper.map_devices(output, {}, include_clients=False)
+    assert [n.role for n in nodes] == [NodeRole.CHILD, NodeRole.PRIMARY]
+
+
+def test_infrastructure_without_serial_is_dropped() -> None:
+    """An Infrastructure device with no unit serial is not a mesh node."""
+    dev = _infra("a", "S1", "A")
+    dev["unit"] = {}
+    nodes, clients = mapper.map_devices({"devices": [dev]}, {}, include_clients=True)
+    assert (nodes, clients) == ((), ())

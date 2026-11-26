@@ -151,14 +151,21 @@ def map_devices(
     backhaul: Mapping[str, Backhaul],
     *,
     include_clients: bool,
+    primary_serial: str | None = None,
 ) -> tuple[tuple[Node, ...], tuple[Client, ...]]:
-    """Split GetDevices into mesh nodes and (optionally) clients."""
+    """Split GetDevices into mesh nodes and (optionally) clients.
+
+    Nodes are devices carrying a ``nodeType`` (older firmware) or whose model
+    device type is ``Infrastructure`` (MX2000 firmware 1.1.x). The primary is
+    the ``Master`` node, else the node whose serial matches ``primary_serial``,
+    else the one flagged ``isAuthority``.
+    """
     devices = _dicts(output.get("devices"))
     nodes: list[Node] = []
     client_devices: list[Mapping[str, Any]] = []
     for device in devices:
-        if _str(device.get("nodeType")) is not None:
-            if node := _map_node(device, backhaul):
+        if _is_node(device):
+            if node := _map_node(device, backhaul, primary_serial):
                 nodes.append(node)
         else:
             client_devices.append(device)
@@ -172,12 +179,35 @@ def map_devices(
     return tuple(nodes), clients
 
 
+def _is_node(device: Mapping[str, Any]) -> bool:
+    if _str(device.get("nodeType")) is not None:
+        return True
+    model = device.get("model")
+    kind = _str(model.get("deviceType")) if isinstance(model, dict) else None
+    return kind is not None and kind.lower() == "infrastructure"
+
+
+def _role(
+    device: Mapping[str, Any], serial: str, primary_serial: str | None
+) -> NodeRole:
+    node_type = (_str(device.get("nodeType")) or "").lower()
+    if node_type == "master":
+        return NodeRole.PRIMARY
+    if node_type:
+        return NodeRole.CHILD
+    if primary_serial is not None:
+        return NodeRole.PRIMARY if serial == primary_serial else NodeRole.CHILD
+    return NodeRole.PRIMARY if device.get("isAuthority") is True else NodeRole.CHILD
+
+
 def _with_count(node: Node, counts: Mapping[str, int]) -> Node:
     return replace(node, client_count=counts.get(node.device_id, 0))
 
 
 def _map_node(
-    device: Mapping[str, Any], backhaul: Mapping[str, Backhaul]
+    device: Mapping[str, Any],
+    backhaul: Mapping[str, Backhaul],
+    primary_serial: str | None,
 ) -> Node | None:
     unit = device.get("unit")
     unit = unit if isinstance(unit, dict) else {}
@@ -189,8 +219,7 @@ def _map_node(
         return None
     props = _properties(device)
     conns = _connections(device)
-    node_type = (_str(device.get("nodeType")) or "").lower()
-    role = NodeRole.PRIMARY if node_type == "master" else NodeRole.CHILD
+    role = _role(device, serial, primary_serial)
     link = backhaul.get(device_id)
     return Node(
         device_id=device_id,

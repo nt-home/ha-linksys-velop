@@ -111,6 +111,7 @@ class VelopClient:
                 devices_resp.output,
                 backhaul,
                 include_clients=wan.mode is NetworkMode.ROUTER,
+                primary_serial=identity.serial,
             )
         else:
             nodes, clients = (), ()
