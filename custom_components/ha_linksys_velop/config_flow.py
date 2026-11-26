@@ -70,7 +70,6 @@ _LOGGER = logging.getLogger(__name__)
 
 SECTION_REFRESH = "refresh"
 SECTION_NODES = "nodes"
-MAX_NODE_SLOTS = 16
 SECTION_PRESENCE = "presence"
 
 _PASSWORD = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
@@ -118,14 +117,24 @@ def _error_key(exc: VelopError) -> str:
     return "unknown"
 
 
+def _slot_key(text: str, slot: int) -> str:
+    """Return a form key that displays as ``text`` but is unique per node slot.
+
+    Form keys must be unique, yet every node should show the same "Area" and
+    "Remove node" labels. Invisible zero-width spaces make the keys differ
+    without changing what is displayed, so no translation lookup is needed.
+    """
+    return text + "\u200b" * slot
+
+
 def _area_key(slot: int) -> str:
-    """Form key of a node's area picker; translated as "Area" for every slot."""
-    return f"area_{slot}"
+    """Form key of a node's area picker, displayed as "Area"."""
+    return _slot_key("Area", slot)
 
 
 def _remove_key(slot: int) -> str:
-    """Form key of a node's remove switch; translated as "Remove node"."""
-    return f"remove_{slot}"
+    """Form key of a node's remove switch, displayed as "Remove node"."""
+    return _slot_key("Remove node", slot)
 
 
 def _node_label(node: Node) -> str:

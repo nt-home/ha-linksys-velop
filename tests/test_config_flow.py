@@ -535,9 +535,11 @@ LABELS = {1: LABEL_1, 2: LABEL_2, 3: LABEL_3}
 def _k(label: str, field: str) -> str:
     """Form key of a node field: the node label, or its numbered Area/Remove key."""
     slot = next(i for i, name in LABELS.items() if name == label)
-    return {"Name": label, "Area": f"area_{slot}", "Remove node": f"remove_{slot}"}[
-        field
-    ]
+    return {
+        "Name": label,
+        "Area": config_flow._area_key(slot),
+        "Remove node": config_flow._remove_key(slot),
+    }[field]
 
 
 def _cards(form: Any) -> dict[str, dict[str, Any]]:
@@ -574,15 +576,18 @@ async def test_options_flow_full(
     # Each node: its title as the first input's label, then area and (for
     # child nodes only) the remove switch.
     assert list(mesh) == [
-        LABEL_1,
-        "area_1",
-        LABEL_2,
-        "area_2",
-        "remove_2",
-        LABEL_3,
-        "area_3",
-        "remove_3",
+        _k(LABEL_1, "Name"),
+        _k(LABEL_1, "Area"),
+        _k(LABEL_2, "Name"),
+        _k(LABEL_2, "Area"),
+        _k(LABEL_2, "Remove node"),
+        _k(LABEL_3, "Name"),
+        _k(LABEL_3, "Area"),
+        _k(LABEL_3, "Remove node"),
     ]
+    # Unique keys, but every node shows the same visible labels.
+    shown = {k.replace("\u200b", "") for k in mesh}
+    assert shown == {LABEL_1, LABEL_2, LABEL_3, "Area", "Remove node"}
     assert mesh[_k(LABEL_2, "Remove node")].default() is False
     assert mesh[_k(LABEL_2, "Name")].default() == "Bedroom"
     assert set(cards["presence"]) == {
@@ -746,15 +751,10 @@ def test_node_device_helper_used() -> None:
     )
 
 
-def test_node_field_labels_are_translated() -> None:
-    """Every numbered Area and Remove node key has a label in the translations."""
-    import json
-    from pathlib import Path
-
-    root = Path(config_flow.__file__).parent
-    for name in ("strings.json", "translations/en.json"):
-        data = json.loads((root / name).read_text())
-        labels = data["options"]["step"]["init"]["sections"]["nodes"]["data"]
-        for slot in range(1, config_flow.MAX_NODE_SLOTS + 1):
-            assert labels[f"area_{slot}"] == "Area"
-            assert labels[f"remove_{slot}"] == "Remove node"
+def test_slot_keys_are_unique_but_display_identically() -> None:
+    """Area and Remove node keys differ per slot yet show the same text."""
+    areas = {config_flow._area_key(i) for i in range(1, 20)}
+    removes = {config_flow._remove_key(i) for i in range(1, 20)}
+    assert len(areas) == len(removes) == 19
+    assert {k.replace("\u200b", "") for k in areas} == {"Area"}
+    assert {k.replace("\u200b", "") for k in removes} == {"Remove node"}
