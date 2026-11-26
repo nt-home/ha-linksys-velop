@@ -6,6 +6,7 @@ import pytest
 
 from custom_components.ha_linksys_velop.domain.errors import InvalidHostError
 from custom_components.ha_linksys_velop.domain.validation import (
+    effective_use_ssl,
     validate_host,
     validate_port,
 )
@@ -50,6 +51,8 @@ def test_validate_host_accepts(raw: str, expected: str) -> None:
         ("LOCALHOST", "format"),
         ("127.0.0.1", "forbidden"),
         ("::1", "forbidden"),
+        ("::ffff:127.0.0.1", "forbidden"),
+        ("::ffff:169.254.169.254", "forbidden"),
         ("0.0.0.0", "forbidden"),  # noqa: S104
         ("::", "forbidden"),
         ("224.0.0.1", "forbidden"),
@@ -85,3 +88,23 @@ def test_validate_port_rejects(port: int) -> None:
     """Out-of-range ports raise."""
     with pytest.raises(InvalidHostError, match="port"):
         validate_port(port, use_ssl=False)
+
+
+@pytest.mark.parametrize(
+    ("port", "ssl", "expected"),
+    [
+        (80, True, False),
+        (80, False, False),
+        (443, False, True),
+        (443, True, True),
+        (8443, False, True),
+        (8443, True, True),
+        (8080, True, True),
+        (8080, False, False),
+        (None, True, True),
+        (None, False, False),
+    ],
+)
+def test_effective_use_ssl(port: int | None, ssl: bool, expected: bool) -> None:
+    """Ports 80/443/8443 decide SSL; any other port keeps the user's choice."""
+    assert effective_use_ssl(port, use_ssl=ssl) is expected

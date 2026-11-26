@@ -6,10 +6,18 @@ from collections.abc import AsyncGenerator, Generator
 from unittest.mock import patch
 
 import pytest
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_VERIFY_SSL
+from homeassistant.core import HomeAssistant
 from pytest_homeassistant.common import MockConfigEntry
 
-from custom_components.ha_linksys_velop.const import CONF_USE_SSL, DOMAIN
+from custom_components.ha_linksys_velop.application.credentials import (
+    async_encrypt_password,
+)
+from custom_components.ha_linksys_velop.const import (
+    CONF_USE_SSL,
+    CONFIG_ENTRY_MINOR_VERSION,
+    DOMAIN,
+)
 from tests.emulator.server import PASSWORD, PRIMARY_SERIAL, Emulator
 
 
@@ -38,13 +46,14 @@ async def emulator() -> AsyncGenerator[Emulator]:
 
 
 @pytest.fixture
-def entry_data(emulator: Emulator) -> dict[str, object]:
-    """Config entry data pointing at the emulator."""
+async def entry_data(hass: HomeAssistant, emulator: Emulator) -> dict[str, object]:
+    """Config entry data pointing at the emulator (password stored encrypted)."""
     return {
         CONF_HOST: "127.0.0.1",
         CONF_PORT: emulator.port,
         CONF_USE_SSL: False,
-        CONF_PASSWORD: PASSWORD,
+        CONF_VERIFY_SSL: False,
+        CONF_PASSWORD: await async_encrypt_password(hass, PASSWORD),
     }
 
 
@@ -54,6 +63,7 @@ def mock_entry(entry_data: dict[str, object]) -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         data=entry_data,
+        minor_version=CONFIG_ENTRY_MINOR_VERSION,
         unique_id=PRIMARY_SERIAL,
         title="Velop MX2000 5678",
     )

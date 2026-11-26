@@ -10,7 +10,7 @@ import probatio
 import pytest
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import area_registry as ar
@@ -19,6 +19,10 @@ from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.ha_linksys_velop import config_flow
+from custom_components.ha_linksys_velop.application.credentials import (
+    async_decrypt_password,
+    async_encrypt_password,
+)
 from custom_components.ha_linksys_velop.const import (
     CONF_USE_SSL,
     DOMAIN,
@@ -102,6 +106,11 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
 # --------------------------------------------------------------------------
 
 
+async def _stored(hass: HomeAssistant, entry: MockConfigEntry) -> str:
+    """Return the decrypted password stored in an entry."""
+    return await async_decrypt_password(hass, entry.data[CONF_PASSWORD])
+
+
 async def test_user_flow_happy_path(hass: HomeAssistant, emulator: Emulator) -> None:
     """The user step validates the hub and creates the entry directly."""
     result = await _submit_user(hass, emulator)
@@ -111,8 +120,12 @@ async def test_user_flow_happy_path(hass: HomeAssistant, emulator: Emulator) -> 
         CONF_HOST: "127.0.0.1",
         CONF_PORT: emulator.port,
         CONF_USE_SSL: False,
-        CONF_PASSWORD: PASSWORD,
+        CONF_VERIFY_SSL: False,
+        CONF_PASSWORD: result["data"][CONF_PASSWORD],
     }
+    assert result["data"][CONF_PASSWORD].startswith("enc:v1:")
+    assert PASSWORD not in str(result["data"])
+    assert await _stored(hass, result["result"]) == PASSWORD
     # No node picker: every node is added and HA's own dialog assigns areas.
     assert result["options"] == {}
     entry = result["result"]
@@ -291,7 +304,7 @@ async def test_user_flow_duplicate_updates_host(
     assert result["reason"] == "already_configured"
     assert mock_entry.data[CONF_HOST] == "127.0.0.1"
     assert mock_entry.data[CONF_PORT] == emulator.port
-    assert mock_entry.data[CONF_PASSWORD] == PASSWORD
+    assert await _stored(hass, mock_entry) == PASSWORD
 
 
 async def test_user_flow_bridge_mode(hass: HomeAssistant, emulator: Emulator) -> None:
@@ -348,7 +361,7 @@ async def test_reconfigure_happy_path_keeps_password(
         await hass.async_block_till_done()
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
-    assert mock_entry.data[CONF_PASSWORD] == PASSWORD
+    assert await _stored(hass, mock_entry) == PASSWORD
     assert mock_entry.unique_id == PRIMARY_SERIAL
 
 
@@ -372,7 +385,7 @@ async def test_reconfigure_new_password(
         )
         await hass.async_block_till_done()
     assert result["reason"] == "reconfigure_successful"
-    assert mock_entry.data[CONF_PASSWORD] == NEW_PASSWORD
+    assert await _stored(hass, mock_entry) == NEW_PASSWORD
 
 
 @pytest.mark.parametrize(
@@ -403,7 +416,7 @@ async def test_reconfigure_errors(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
     _assert_no_secret(result)
-    assert mock_entry.data[CONF_PASSWORD] == PASSWORD
+    assert await _stored(hass, mock_entry) == PASSWORD
 
 
 async def test_reconfigure_invalid_host(
@@ -456,7 +469,7 @@ async def _reauth_form(
 ) -> tuple[MockConfigEntry, Any]:
     entry = MockConfigEntry(
         domain=DOMAIN,
-        data={**entry_data, CONF_PASSWORD: WRONG},
+        data={**entry_data, CONF_PASSWORD: await async_encrypt_password(hass, WRONG)},
         unique_id=PRIMARY_SERIAL,
         title="Velop MX2000 5678",
     )
@@ -481,7 +494,7 @@ async def test_reauth_success(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     await hass.async_block_till_done()
-    assert entry.data[CONF_PASSWORD] == PASSWORD
+    assert await _stored(hass, entry) == PASSWORD
     assert entry.state is ConfigEntryState.LOADED
 
 
@@ -496,7 +509,7 @@ async def test_reauth_wrong_password_then_success(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
     _assert_no_secret(result, "still-wrong", PASSWORD)
-    assert entry.data[CONF_PASSWORD] == WRONG
+    assert await _stored(hass, entry) == WRONG
     result = await hass.config_entries.flow.async_configure(
         form["flow_id"], {CONF_PASSWORD: PASSWORD}
     )
@@ -523,7 +536,7 @@ async def test_reauth_wrong_hub(
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "wrong_hub"
-    assert entry.data[CONF_PASSWORD] == WRONG
+    assert await _stored(hass, entry) == WRONG
 
 
 # --------------------------------------------------------------------------

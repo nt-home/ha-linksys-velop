@@ -18,6 +18,10 @@ PLATFORMS: list[Platform] = [
 
 CONF_USE_SSL = "use_ssl"
 
+DEFAULT_USE_SSL = True
+DEFAULT_VERIFY_SSL = False
+CONFIG_ENTRY_MINOR_VERSION = 2
+
 OPT_FAST_INTERVAL = "fast_interval"
 OPT_SLOW_INTERVAL = "slow_interval"
 OPT_INCLUDED_CHILDREN = "included_children"

@@ -5,21 +5,34 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 
+from .application.credentials import (
+    async_decrypt_password,
+    async_encrypt_password,
+)
 from .application.factory import create_client
-from .const import CONF_USE_SSL, DOMAIN, PLATFORMS, ROUTER_ONLY_KEYS
+from .const import (
+    CONF_USE_SSL,
+    CONFIG_ENTRY_MINOR_VERSION,
+    DEFAULT_VERIFY_SSL,
+    DOMAIN,
+    PLATFORMS,
+    ROUTER_ONLY_KEYS,
+)
 from .coordinator import VelopConfigEntry, VelopCoordinator
 from .domain.errors import (
     AccountLockedError,
     InvalidAuthError,
     NotPrimaryNodeError,
+    SecretUnavailableError,
     VelopError,
 )
 from .domain.models import NetworkMode
+from .infrastructure.cipher import is_encrypted
 from .services import async_register_actions
 
 if TYPE_CHECKING:
@@ -38,15 +51,40 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: VelopConfigEntry) -> bool:
+    """Migrate 1.1 -> 1.2: encrypt the stored password, add verify_ssl."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < CONFIG_ENTRY_MINOR_VERSION:
+        data = dict(entry.data)
+        stored = data.get(CONF_PASSWORD, "")
+        if not is_encrypted(stored):
+            data[CONF_PASSWORD] = await async_encrypt_password(hass, stored)
+        data.setdefault(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+        hass.config_entries.async_update_entry(
+            entry, data=data, minor_version=CONFIG_ENTRY_MINOR_VERSION
+        )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: VelopConfigEntry) -> bool:
     """Set up a hub from a config entry."""
+    try:
+        # Decrypted only now, to build the client; never kept in the entry.
+        password = await async_decrypt_password(hass, entry.data[CONF_PASSWORD])
+    except SecretUnavailableError as exc:
+        raise ConfigEntryAuthFailed(
+            translation_domain=DOMAIN, translation_key="secret_unavailable"
+        ) from exc
     client = create_client(
         hass,
         entry.data[CONF_HOST],
         entry.data[CONF_PORT],
         use_ssl=entry.data[CONF_USE_SSL],
-        password=entry.data[CONF_PASSWORD],
+        verify_ssl=entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+        password=password,
     )
+    del password
     try:
         identity = await client.async_get_identity()
     except (InvalidAuthError, AccountLockedError) as exc:

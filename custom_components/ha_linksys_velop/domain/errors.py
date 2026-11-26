@@ -46,3 +46,7 @@ class NotPrimaryNodeError(VelopError):
 
 class InvalidHostError(VelopError):
     """The supplied host is not an acceptable hub address."""
+
+
+class SecretUnavailableError(VelopError):
+    """The stored admin password cannot be decrypted (missing or wrong key)."""

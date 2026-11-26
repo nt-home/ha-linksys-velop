@@ -12,7 +12,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers import device_registry as dr
@@ -30,13 +30,20 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
+from .application.credentials import (
+    async_decrypt_password,
+    async_encrypt_password,
+)
 from .application.factory import create_client
 from .application.onboarding import OnboardingResult, async_probe_hub
 from .const import (
     CONF_USE_SSL,
+    CONFIG_ENTRY_MINOR_VERSION,
     DEFAULT_CONSIDER_HOME,
     DEFAULT_FAST_INTERVAL,
     DEFAULT_SLOW_INTERVAL,
+    DEFAULT_USE_SSL,
+    DEFAULT_VERIFY_SSL,
     DOMAIN,
     MAX_FAST_INTERVAL,
     MAX_SLOW_INTERVAL,
@@ -57,11 +64,12 @@ from .domain.errors import (
     InvalidAuthError,
     InvalidHostError,
     NotPrimaryNodeError,
+    SecretUnavailableError,
     UnsupportedDeviceError,
     VelopError,
 )
 from .domain.models import Node, NodeRole
-from .domain.validation import validate_host, validate_port
+from .domain.validation import effective_use_ssl, validate_host, validate_port
 
 if TYPE_CHECKING:
     from .coordinator import VelopConfigEntry
@@ -90,9 +98,12 @@ def _user_schema(defaults: dict[str, Any] | None = None) -> probatio.Schema:
             probatio.Required(CONF_HOST, default=d.get(CONF_HOST, "")): TextSelector(),
             port_key: _PORT,
             probatio.Required(CONF_PASSWORD): _PASSWORD,
-            probatio.Required(CONF_USE_SSL, default=d.get(CONF_USE_SSL, False)): (
-                BooleanSelector()
-            ),
+            probatio.Required(
+                CONF_USE_SSL, default=d.get(CONF_USE_SSL, DEFAULT_USE_SSL)
+            ): (BooleanSelector()),
+            probatio.Required(
+                CONF_VERIFY_SSL, default=d.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+            ): BooleanSelector(),
         }
     )
 
@@ -113,6 +124,8 @@ def _error_key(exc: VelopError) -> str:
         return "not_primary_node"
     if isinstance(exc, InvalidHostError):
         return "invalid_host"
+    if isinstance(exc, SecretUnavailableError):
+        return "secret_unavailable"
     _LOGGER.warning("Hub setup failed with an unmapped error: %r", exc)
     return "unknown"
 
@@ -150,6 +163,7 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
     """Guided setup of one Velop hub."""
 
     VERSION = 1
+    MINOR_VERSION = CONFIG_ENTRY_MINOR_VERSION
 
     def __init__(self) -> None:
         """Initialise flow state."""
@@ -157,26 +171,38 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
         self._probe: OnboardingResult | None = None
 
     async def _async_probe(self, user_input: dict[str, Any]) -> OnboardingResult:
-        """Validate input and probe the hub, raising a domain error on failure."""
+        """Validate input and probe the hub, raising a domain error on failure.
+
+        ``user_input`` carries the password in clear text; ``CONF_PASSWORD`` in the
+        flow data is the encrypted form, stored only after a successful probe.
+        """
         host = validate_host(user_input[CONF_HOST])
         raw_port = user_input.get(CONF_PORT)
         port = validate_port(
             None if raw_port in (None, "") else int(raw_port),
             use_ssl=user_input[CONF_USE_SSL],
         )
+        use_ssl = effective_use_ssl(
+            None if raw_port in (None, "") else port, use_ssl=user_input[CONF_USE_SSL]
+        )
+        verify_ssl = use_ssl and user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
         client = create_client(
             self.hass,
             host,
             port,
-            use_ssl=user_input[CONF_USE_SSL],
+            use_ssl=use_ssl,
+            verify_ssl=verify_ssl,
             password=user_input[CONF_PASSWORD],
         )
         result = await async_probe_hub(client)
         self._data = {
             CONF_HOST: host,
             CONF_PORT: port,
-            CONF_USE_SSL: user_input[CONF_USE_SSL],
-            CONF_PASSWORD: user_input[CONF_PASSWORD],
+            CONF_USE_SSL: use_ssl,
+            CONF_VERIFY_SSL: verify_ssl,
+            CONF_PASSWORD: await async_encrypt_password(
+                self.hass, user_input[CONF_PASSWORD]
+            ),
         }
         return result
 
@@ -196,7 +222,8 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(self._probe.identity.serial)
                 self._abort_if_unique_id_configured(
                     updates={
-                        k: self._data[k] for k in (CONF_HOST, CONF_PORT, CONF_USE_SSL)
+                        k: self._data[k]
+                        for k in (CONF_HOST, CONF_PORT, CONF_USE_SSL, CONF_VERIFY_SSL)
                     }
                 )
                 identity = self._probe.identity
@@ -218,9 +245,11 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             merged = dict(user_input)
-            if not merged.get(CONF_PASSWORD):
-                merged[CONF_PASSWORD] = entry.data[CONF_PASSWORD]
             try:
+                if not merged.get(CONF_PASSWORD):
+                    merged[CONF_PASSWORD] = await async_decrypt_password(
+                        self.hass, entry.data[CONF_PASSWORD]
+                    )
                 result = await self._async_probe(merged)
             except VelopError as exc:
                 errors["base"] = _error_key(exc)
@@ -236,6 +265,7 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_HOST: entry.data[CONF_HOST],
             CONF_PORT: entry.data[CONF_PORT],
             CONF_USE_SSL: entry.data[CONF_USE_SSL],
+            CONF_VERIFY_SSL: entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
         }
         schema = probatio.Schema(
             {
@@ -247,6 +277,9 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                 probatio.Required(CONF_USE_SSL, default=defaults[CONF_USE_SSL]): (
                     BooleanSelector()
                 ),
+                probatio.Required(
+                    CONF_VERIFY_SSL, default=defaults[CONF_VERIFY_SSL]
+                ): BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -268,6 +301,7 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_HOST: entry.data[CONF_HOST],
                 CONF_PORT: entry.data[CONF_PORT],
                 CONF_USE_SSL: entry.data[CONF_USE_SSL],
+                CONF_VERIFY_SSL: entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
             }
             try:
@@ -278,7 +312,7 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(result.identity.serial)
                 self._abort_if_unique_id_mismatch(reason="wrong_hub")
                 return self.async_update_reload_and_abort(
-                    entry, data_updates={CONF_PASSWORD: user_input[CONF_PASSWORD]}
+                    entry, data_updates={CONF_PASSWORD: self._data[CONF_PASSWORD]}
                 )
         return self.async_show_form(
             step_id="reauth_confirm",

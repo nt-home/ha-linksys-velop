@@ -3,18 +3,20 @@
     "step": {
       "user": {
         "title": "Connect to your Velop",
-        "description": "Enter the address and admin password of the primary Velop node. If Use SSL is off, the password is sent unencrypted over your network.",
+        "description": "Enter the address and admin password of the primary Velop node. If Use SSL is off, the password is sent unencrypted over your network. The password is stored encrypted.",
         "data": {
           "host": "Host",
           "port": "Port",
           "password": "Admin password",
-          "use_ssl": "Use SSL"
+          "use_ssl": "Use SSL",
+          "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
           "host": "IP address or host name of the primary node, for example 192.168.1.1.",
-          "port": "Leave empty to use 443 with SSL or 80 without. Common alternatives are 8443.",
+          "port": "Leave empty to use 443 with SSL or 80 without. Port 80 turns Use SSL off; ports 443 and 8443 turn it on.",
           "password": "The Linksys admin password.",
-          "use_ssl": "Connect over HTTPS. The router certificate is not verified, so self-signed certificates work."
+          "use_ssl": "Connect over HTTPS. On by default; the port you enter can override it (80 = off, 443 and 8443 = on).",
+          "verify_ssl": "Check the certificate of the HTTPS endpoint. Leave off for the router's own self-signed certificate; turn on when a proxy with a valid certificate is in front of the node. Only used with Use SSL."
         }
       },
       "reconfigure": {
@@ -24,13 +26,15 @@
           "host": "Host",
           "port": "Port",
           "password": "Admin password",
-          "use_ssl": "Use SSL"
+          "use_ssl": "Use SSL",
+          "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
           "host": "IP address or host name of the primary node.",
           "port": "Port of the JNAP endpoint.",
           "password": "Leave empty to keep the current password.",
-          "use_ssl": "Connect over HTTPS without verifying the certificate."
+          "use_ssl": "Connect over HTTPS. The port you enter can override it (80 = off, 443 and 8443 = on).",
+          "verify_ssl": "Check the HTTPS certificate. Only used with Use SSL."
         }
       },
       "reauth_confirm": {
@@ -52,7 +56,8 @@
       "unsupported_device": "The address did not answer like a Linksys Velop.",
       "not_primary_node": "This address is a child node. Use the primary node.",
       "invalid_host": "Enter a host name or IP address without http://, a path or a port.",
-      "unknown": "An unexpected error occurred."
+      "unknown": "An unexpected error occurred.",
+      "secret_unavailable": "The stored password could not be decrypted. Enter the password again."
     },
     "abort": {
       "already_configured": "This Velop is already configured. Its connection details were updated.",
@@ -128,6 +133,9 @@
     },
     "no_hub": {
       "message": "No Velop is loaded."
+    },
+    "secret_unavailable": {
+      "message": "The stored admin password could not be decrypted. Reauthenticate to enter it again."
     }
   },
   "issues": {
