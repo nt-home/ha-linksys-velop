@@ -17,16 +17,6 @@
           "use_ssl": "Connect over HTTPS. The router certificate is not verified, so self-signed certificates work."
         }
       },
-      "nodes": {
-        "title": "Choose mesh nodes",
-        "description": "Found {node_count} mesh node(s). Pick the child nodes to add and optionally assign an area to each node.",
-        "data": {
-          "included_children": "Child nodes to add"
-        },
-        "data_description": {
-          "included_children": "The primary node is always added."
-        }
-      },
       "reconfigure": {
         "title": "Reconfigure your Velop",
         "description": "Change how Home Assistant connects. Leave the password empty to keep the stored one.",

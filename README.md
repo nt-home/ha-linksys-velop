@@ -5,7 +5,7 @@ Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6,
 ## Features
 
 - Guided setup: host or IP, port (80, 443, 8443, …), admin password, **Use SSL** switch. The router certificate is **not verified**, so self-signed certificates work.
-- Node picker: only the mesh nodes (primary and children) are listed, each with an area dropdown.
+- Mesh nodes only: all nodes (primary and children) are added, and Home Assistant's own **Name and assign** dialog lets you name each node and pick its area. Remove nodes you don't want later in the options.
 - Hub device (primary node) with child nodes linked underneath it.
 - Works in router and bridge mode (client entities are created only in router mode).
 - Add, remove, reconfigure (`Reconfigure`), re-authenticate and tune options (refresh intervals, included nodes, areas, presence tracking).

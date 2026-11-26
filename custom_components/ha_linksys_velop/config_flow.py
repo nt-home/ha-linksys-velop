@@ -169,60 +169,15 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                         k: self._data[k] for k in (CONF_HOST, CONF_PORT, CONF_USE_SSL)
                     }
                 )
-                return await self.async_step_nodes()
+                identity = self._probe.identity
+                return self.async_create_entry(
+                    title=f"Velop {identity.model} {identity.serial[-4:]}",
+                    data=self._data,
+                )
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(_user_schema(), user_input),
             errors=errors,
-        )
-
-    async def async_step_nodes(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Choose which mesh nodes to include and assign areas."""
-        probe = self._probe
-        if probe is None:
-            return self.async_abort(reason="unknown")
-        nodes = probe.nodes
-        children = [n for n in nodes if n.role is NodeRole.CHILD]
-        labels = {n.serial: _node_label(n) for n in nodes}
-        if user_input is not None:
-            included = list(user_input.get(OPT_INCLUDED_CHILDREN, []))
-            areas = {
-                serial: user_input[label]
-                for serial, label in labels.items()
-                if user_input.get(label)
-            }
-            identity = probe.identity
-            return self.async_create_entry(
-                title=f"Velop {identity.model} {identity.serial[-4:]}",
-                data=self._data,
-                options={
-                    OPT_INCLUDED_CHILDREN: included,
-                    OPT_AREAS: areas,
-                },
-            )
-        schema: dict[Any, Any] = {}
-        if children:
-            schema[
-                probatio.Optional(
-                    OPT_INCLUDED_CHILDREN, default=[n.serial for n in children]
-                )
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value=n.serial, label=labels[n.serial])
-                        for n in children
-                    ],
-                    multiple=True,
-                )
-            )
-        for label in labels.values():
-            schema[probatio.Optional(label)] = AreaSelector()
-        return self.async_show_form(
-            step_id="nodes",
-            data_schema=probatio.Schema(schema),
-            description_placeholders={"node_count": str(len(nodes))},
         )
 
     async def async_step_reconfigure(

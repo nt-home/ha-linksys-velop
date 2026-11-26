@@ -101,27 +101,8 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
 
 
 async def test_user_flow_happy_path(hass: HomeAssistant, emulator: Emulator) -> None:
-    """User step, nodes step with areas, creates the entry."""
-    areas = ar.async_get(hass)
-    kitchen = areas.async_create("Kitchen")
-    attic = areas.async_create("Attic")
-
+    """The user step validates the hub and creates the entry directly."""
     result = await _submit_user(hass, emulator)
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "nodes"
-    assert result["description_placeholders"] == {"node_count": "3"}
-    keys = {str(k) for k in result["data_schema"].schema}
-    assert keys == {OPT_INCLUDED_CHILDREN, LABEL_1, LABEL_2, LABEL_3}
-    _assert_no_secret(result)
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            OPT_INCLUDED_CHILDREN: [CHILD_2],
-            LABEL_1: kitchen.id,
-            LABEL_3: attic.id,
-        },
-    )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Velop MX2000 5678"
     assert result["data"] == {
@@ -130,27 +111,15 @@ async def test_user_flow_happy_path(hass: HomeAssistant, emulator: Emulator) -> 
         CONF_USE_SSL: False,
         CONF_PASSWORD: PASSWORD,
     }
-    assert result["options"] == {
-        OPT_INCLUDED_CHILDREN: [CHILD_2],
-        OPT_AREAS: {PRIMARY_SERIAL: kitchen.id, CHILD_3: attic.id},
-    }
+    # No node picker: every node is added and HA's own dialog assigns areas.
+    assert result["options"] == {}
     entry = result["result"]
     assert entry.unique_id == PRIMARY_SERIAL
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
-
-
-async def test_user_flow_nodes_defaults(
-    hass: HomeAssistant, emulator: Emulator
-) -> None:
-    """Submitting the nodes step empty keeps all children and no areas."""
-    result = await _submit_user(hass, emulator)
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["options"] == {
-        OPT_INCLUDED_CHILDREN: [CHILD_2, CHILD_3],
-        OPT_AREAS: {},
-    }
+    registry = dr.async_get(hass)
+    for serial in (PRIMARY_SERIAL, CHILD_2, CHILD_3):
+        assert registry.async_get_device_by_identifier((DOMAIN, serial), entry.entry_id)
 
 
 async def test_user_flow_empty_port_defaults(
@@ -169,9 +138,7 @@ async def test_user_flow_empty_port_defaults(
         )
     spy.assert_called_once_with(None, use_ssl=False)
     assert spy.call_args is not None
-    assert result["errors"] == {"base": "cannot_connect"} or result["step_id"] == (
-        "nodes"
-    )
+    assert result["type"] in (FlowResultType.FORM, FlowResultType.CREATE_ENTRY)
 
 
 async def test_probe_blank_string_port(hass: HomeAssistant, emulator: Emulator) -> None:
@@ -329,7 +296,6 @@ async def test_user_flow_bridge_mode(hass: HomeAssistant, emulator: Emulator) ->
     """A hub in bridge mode can still be added."""
     emulator.wan_type = "Bridge"
     result = await _submit_user(hass, emulator)
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Velop MX2000 5678"
 
@@ -340,33 +306,17 @@ async def test_user_flow_self_signed_https(hass: HomeAssistant) -> None:
     await emu.start(use_ssl=True)
     try:
         result = await _submit_user(hass, emu, **{CONF_USE_SSL: True})
-        assert result["step_id"] == "nodes"
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
         assert result["type"] is FlowResultType.CREATE_ENTRY
         assert result["data"][CONF_USE_SSL] is True
     finally:
         await emu.stop()
 
 
-async def test_user_flow_single_node_has_no_children_field(
-    hass: HomeAssistant, emulator: Emulator
-) -> None:
-    """Without child nodes the nodes step offers only area selectors."""
+async def test_user_flow_single_node(hass: HomeAssistant, emulator: Emulator) -> None:
+    """A mesh with only the primary node can be added."""
     emulator.devices = [d for d in emulator.devices if d["deviceID"] == "node-1"]
     result = await _submit_user(hass, emulator)
-    keys = {str(k) for k in result["data_schema"].schema}
-    assert keys == {LABEL_1}
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["options"] == {OPT_INCLUDED_CHILDREN: [], OPT_AREAS: {}}
-
-
-async def test_nodes_step_without_probe_aborts(hass: HomeAssistant) -> None:
-    """Reaching the nodes step with no probe result aborts."""
-    flow = config_flow.VelopConfigFlow()
-    flow.hass = hass
-    result = await flow.async_step_nodes()
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "unknown"
+    assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
 # --------------------------------------------------------------------------
