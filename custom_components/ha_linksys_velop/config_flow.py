@@ -398,9 +398,10 @@ class VelopOptionsFlow(OptionsFlowWithReload):
         fields: dict[Any, Any] = {}
         for slot, node in enumerate(nodes, 1):
             label = labels[node.serial]
-            # A literal value is serialised as a constant: the frontend draws it
-            # as plain text, which gives each node a title above its inputs.
-            fields[probatio.Optional(label)] = label
+            # A literal value is serialised as a constant: the frontend draws its
+            # name as plain text, giving each node a title above its inputs. The
+            # value stays empty because the frontend prints "name: value".
+            fields[probatio.Optional(label)] = ""
             device = registry.async_get_device_by_identifier(
                 (DOMAIN, node.serial), self.config_entry.entry_id
             )

@@ -680,7 +680,7 @@ async def test_options_flow_full(
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
             "nodes": {
-                LABEL_1: LABEL_1,
+                LABEL_1: "",
                 _k(LABEL_1, "Name"): "Living Room",
                 _k(LABEL_2, "Name"): "Bedroom",
                 _k(LABEL_2, "Area"): den.id,
@@ -789,5 +789,6 @@ async def test_options_form_serialises_for_the_frontend(
     # Home Assistant does not support nesting sections, so every field is flat.
     assert all(f.get("type") != "expandable" for f in nodes["schema"])
     titles = [f for f in nodes["schema"] if f.get("type") == "constant"]
-    assert [f["value"] for f in titles] == [LABEL_1, LABEL_2, LABEL_3]
+    assert [f["name"] for f in titles] == [LABEL_1, LABEL_2, LABEL_3]
+    assert all(f["value"] == "" for f in titles)
     assert len(nodes["schema"]) == 11
