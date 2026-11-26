@@ -1,0 +1,238 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your Velop",
+        "description": "Enter the address and admin password of the primary Velop node. If Use SSL is off, the password is sent unencrypted over your network.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "password": "Admin password",
+          "use_ssl": "Use SSL"
+        },
+        "data_description": {
+          "host": "IP address or host name of the primary node, for example 192.168.1.1.",
+          "port": "Leave empty to use 443 with SSL or 80 without. Common alternatives are 8443.",
+          "password": "The Linksys admin password.",
+          "use_ssl": "Connect over HTTPS. The router certificate is not verified, so self-signed certificates work."
+        }
+      },
+      "nodes": {
+        "title": "Choose mesh nodes",
+        "description": "Found {node_count} mesh node(s). Pick the child nodes to add and optionally assign an area to each node.",
+        "data": {
+          "included_children": "Child nodes to add"
+        },
+        "data_description": {
+          "included_children": "The primary node is always added."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure your Velop",
+        "description": "Change how Home Assistant connects. Leave the password empty to keep the stored one.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "password": "Admin password",
+          "use_ssl": "Use SSL"
+        },
+        "data_description": {
+          "host": "IP address or host name of the primary node.",
+          "port": "Port of the JNAP endpoint.",
+          "password": "Leave empty to keep the current password.",
+          "use_ssl": "Connect over HTTPS without verifying the certificate."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "The router rejected the stored admin password. Enter the current one.",
+        "data": {
+          "password": "Admin password"
+        },
+        "data_description": {
+          "password": "The Linksys admin password."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the router. Check the address, port and SSL setting.",
+      "timeout": "The router did not answer in time.",
+      "invalid_auth": "The admin password was rejected.",
+      "account_locked": "The router has temporarily locked admin sign-in. Wait a few minutes and try again.",
+      "unsupported_device": "The address did not answer like a Linksys Velop.",
+      "not_primary_node": "This address is a child node. Use the primary node.",
+      "invalid_host": "Enter a host name or IP address without http://, a path or a port.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This Velop is already configured. Its connection details were updated.",
+      "wrong_hub": "The address belongs to a different Velop than the one being changed.",
+      "reconfigure_successful": "Reconfiguration was successful.",
+      "reauth_successful": "Re-authentication was successful.",
+      "unknown": "An unexpected error occurred."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Velop options",
+        "data": {
+          "fast_interval": "Refresh interval (seconds)",
+          "slow_interval": "Firmware and statistics interval (minutes)",
+          "included_children": "Child nodes to include",
+          "track_all_clients": "Track all clients",
+          "tracked_clients": "Tracked clients",
+          "consider_home": "Consider home (seconds)"
+        },
+        "data_description": {
+          "fast_interval": "How often status and nodes are refreshed (15-600).",
+          "slow_interval": "How often firmware status is checked (5-1440).",
+          "included_children": "Unselected child nodes are removed from Home Assistant.",
+          "track_all_clients": "Create a presence tracker (disabled by default) for every client. Client names and addresses then appear in Home Assistant.",
+          "tracked_clients": "Clients that get an enabled presence tracker.",
+          "consider_home": "How long a client stays home after it disconnects."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "invalid_auth": {
+      "message": "The router rejected the admin password."
+    },
+    "account_locked": {
+      "message": "The router has locked admin sign-in. Wait a few minutes."
+    },
+    "not_primary_node": {
+      "message": "The configured address is not the primary node."
+    },
+    "cannot_connect": {
+      "message": "Could not reach the router."
+    },
+    "wrong_hub": {
+      "message": "The router at the configured address is a different Velop."
+    },
+    "unknown_node": {
+      "message": "The selected device is not a node of a loaded Velop."
+    },
+    "reboot_recent": {
+      "message": "This node was rebooted less than a minute ago."
+    },
+    "reboot_failed": {
+      "message": "The router did not accept the reboot command."
+    },
+    "no_hub": {
+      "message": "No Velop is loaded."
+    }
+  },
+  "issues": {
+    "account_locked": {
+      "title": "Velop admin sign-in locked",
+      "description": "The router locked or delayed admin sign-in after failed attempts. Wait a few minutes, then reauthenticate the integration."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "internet": {
+        "name": "Internet"
+      },
+      "node_connectivity": {
+        "name": "Connectivity"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "Reboot"
+      }
+    },
+    "event": {
+      "hub_events": {
+        "name": "Events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "wan_connected": "WAN connected",
+              "wan_disconnected": "WAN disconnected",
+              "node_online": "Node online",
+              "node_offline": "Node offline",
+              "node_added": "Node added",
+              "node_removed": "Node removed",
+              "firmware_update_available": "Firmware update available",
+              "mode_changed": "Mode changed",
+              "authentication_failed": "Authentication failed"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "wan_status": {
+        "name": "WAN status"
+      },
+      "wan_ip": {
+        "name": "WAN IP address"
+      },
+      "operating_mode": {
+        "name": "Operating mode",
+        "state": {
+          "router": "Router",
+          "bridge": "Bridge",
+          "unknown": "Unknown"
+        }
+      },
+      "firmware_version": {
+        "name": "Firmware version"
+      },
+      "mesh_node_count": {
+        "name": "Mesh nodes"
+      },
+      "clients_total": {
+        "name": "Connected clients"
+      },
+      "cpu_load": {
+        "name": "CPU load"
+      },
+      "memory_load": {
+        "name": "Memory load"
+      },
+      "client_count": {
+        "name": "Connected clients"
+      },
+      "ip_address": {
+        "name": "IP address"
+      },
+      "backhaul_type": {
+        "name": "Backhaul type"
+      },
+      "backhaul_speed": {
+        "name": "Backhaul speed"
+      },
+      "signal_strength": {
+        "name": "Backhaul signal"
+      },
+      "parent_node": {
+        "name": "Parent node"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    }
+  },
+  "services": {
+    "reboot_node": {
+      "name": "Reboot node",
+      "description": "Reboots a Velop node. Rebooting the primary node restarts the whole mesh.",
+      "fields": {
+        "device_id": {
+          "name": "Node",
+          "description": "The Velop node to reboot."
+        }
+      }
+    },
+    "refresh_now": {
+      "name": "Refresh now",
+      "description": "Refreshes all Velop data immediately."
+    }
+  }
+}

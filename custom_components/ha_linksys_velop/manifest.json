@@ -1,0 +1,18 @@
+{
+  "domain": "ha_linksys_velop",
+  "name": "Linksys Velop Local",
+  "codeowners": [
+    "@nt-home"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/nt-home/ha-linksys-velop",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/nt-home/ha-linksys-velop/issues",
+  "loggers": [
+    "custom_components.ha_linksys_velop"
+  ],
+  "requirements": [],
+  "version": "0.1.0"
+}

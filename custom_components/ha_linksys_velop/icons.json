@@ -1,0 +1,60 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "internet": {
+        "default": "mdi:web"
+      },
+      "node_connectivity": {
+        "default": "mdi:router-wireless"
+      }
+    },
+    "sensor": {
+      "wan_status": {
+        "default": "mdi:wan"
+      },
+      "wan_ip": {
+        "default": "mdi:ip-network"
+      },
+      "operating_mode": {
+        "default": "mdi:router-network"
+      },
+      "mesh_node_count": {
+        "default": "mdi:lan"
+      },
+      "clients_total": {
+        "default": "mdi:devices"
+      },
+      "client_count": {
+        "default": "mdi:devices"
+      },
+      "backhaul_type": {
+        "default": "mdi:transit-connection-variant"
+      },
+      "backhaul_speed": {
+        "default": "mdi:speedometer"
+      },
+      "parent_node": {
+        "default": "mdi:family-tree"
+      },
+      "cpu_load": {
+        "default": "mdi:cpu-64-bit"
+      },
+      "memory_load": {
+        "default": "mdi:memory"
+      }
+    },
+    "event": {
+      "hub_events": {
+        "default": "mdi:bell-ring"
+      }
+    }
+  },
+  "services": {
+    "reboot_node": {
+      "service": "mdi:restart"
+    },
+    "refresh_now": {
+      "service": "mdi:refresh"
+    }
+  }
+}

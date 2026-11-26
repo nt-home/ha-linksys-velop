@@ -1,0 +1,526 @@
+"""Entity, event, action and failure-mode tests against the emulated router."""
+
+from __future__ import annotations
+
+import pytest
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant.common import MockConfigEntry
+
+from custom_components.ha_linksys_velop.const import (
+    DOMAIN,
+    EVENT_BUS_NAME,
+    OPT_TRACK_ALL,
+    OPT_TRACKED_CLIENTS,
+)
+from custom_components.ha_linksys_velop.coordinator import VelopCoordinator
+from tests.emulator.server import PRIMARY_SERIAL, Emulator, three_node_mesh
+
+
+async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> VelopCoordinator:
+    if hass.config_entries.async_get_entry(entry.entry_id) is None:
+        entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry.runtime_data
+
+
+def _capture(hass: HomeAssistant) -> list[Event]:
+    events: list[Event] = []
+    hass.bus.async_listen(EVENT_BUS_NAME, events.append)
+    return events
+
+
+async def _refresh(
+    hass: HomeAssistant, coordinator: VelopCoordinator, n: int = 1
+) -> None:
+    for _ in range(n):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+
+async def test_router_mode_entities(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Hub and node entities reflect the emulated mesh."""
+    await _setup(hass, mock_entry)
+    assert hass.states.get("binary_sensor.living_room_internet").state == "on"
+    assert hass.states.get("sensor.living_room_wan_status").state == "connected"
+    assert hass.states.get("sensor.living_room_operating_mode").state == "router"
+    assert hass.states.get("sensor.living_room_connected_clients").state == "3"
+    assert hass.states.get("sensor.bedroom_backhaul_type").state == "wireless"
+    assert hass.states.get("sensor.bedroom_backhaul_speed").state == "866.0"
+    assert hass.states.get("sensor.bedroom_parent_node").state == "Living Room"
+    assert hass.states.get("binary_sensor.bedroom_connectivity").state == "on"
+    assert hass.states.get("update.bedroom_firmware").state == "off"
+    assert hass.states.get("button.office_reboot") is not None
+    assert hass.states.get("event.living_room_events") is not None
+
+
+async def test_clients_not_exposed_by_default(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """No client entities or identifiers exist unless the user opts in."""
+    await _setup(hass, mock_entry)
+    assert not hass.states.async_entity_ids("device_tracker")
+    for state in hass.states.async_all():
+        assert "AA:BB:CC" not in str(state.attributes)
+
+
+async def test_tracked_clients_presence(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Selected clients get trackers with consider-home semantics."""
+    mock_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_entry, options={OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"]}
+    )
+    coordinator = await _setup(hass, mock_entry)
+    tracker = hass.states.get("device_tracker.client_1")
+    assert tracker is not None and tracker.state == "home"
+    assert tracker.attributes["connected_node"] == "Bedroom"
+    emulator.devices = three_node_mesh(with_clients=0) + [
+        d for d in emulator.devices if d["deviceID"] == "client-1"
+    ]
+    emulator.devices[-1]["connections"] = []
+    await _refresh(hass, coordinator)
+    assert hass.states.get("device_tracker.client_1").state == "home"
+
+
+async def test_track_all_disabled_by_default(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Track-all trackers are created disabled in the registry."""
+    mock_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(mock_entry, options={OPT_TRACK_ALL: True})
+    await _setup(hass, mock_entry)
+    ents = [
+        e
+        for e in er.async_entries_for_config_entry(
+            er.async_get(hass), mock_entry.entry_id
+        )
+        if e.domain == "device_tracker"
+    ]
+    assert len(ents) == 3
+    assert all(e.disabled for e in ents)
+
+
+async def test_bridge_mode_skips_router_entities(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Bridge mode keeps nodes but never creates client entities."""
+    emulator.wan_type = "Bridge"
+    await _setup(hass, mock_entry)
+    assert hass.states.get("sensor.living_room_operating_mode").state == "bridge"
+    assert hass.states.get("sensor.living_room_connected_clients") is None
+    assert hass.states.get("sensor.bedroom_connected_clients") is None
+    assert hass.states.get("sensor.bedroom_backhaul_type") is not None
+    assert not hass.states.async_entity_ids("device_tracker")
+
+
+async def test_wan_events_debounced(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """WAN loss fires once after two consecutive refreshes, never at startup."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    assert events == []
+    emulator.wan_status = "Disconnected"
+    await _refresh(hass, coordinator)
+    assert events == []
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == ["wan_disconnected"]
+    assert events[0].data["device_id"]
+    assert hass.states.get("binary_sensor.living_room_internet").state == "off"
+    entity_state = hass.states.get("event.living_room_events")
+    assert entity_state.attributes["event_type"] == "wan_disconnected"
+    emulator.wan_status = "Connected"
+    await _refresh(hass, coordinator, 2)
+    assert events[-1].data["type"] == "wan_connected"
+
+
+async def test_node_offline_added_removed(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Node transitions emit events and stale devices are removed."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    office = emulator.devices[2]
+    saved = office["connections"]
+    office["connections"] = []
+    await _refresh(hass, coordinator, 2)
+    assert events[-1].data["type"] == "node_offline"
+    assert hass.states.get("binary_sensor.office_connectivity").state == "off"
+    office["connections"] = saved
+    await _refresh(hass, coordinator, 2)
+    assert events[-1].data["type"] == "node_online"
+
+    from tests.emulator.server import node_device  # noqa: PLC0415
+
+    emulator.devices.append(
+        node_device("node-4", "12K10M44444444", "Slave", "Garage", parent="node-1")
+    )
+    await _refresh(hass, coordinator)
+    assert events[-1].data["type"] == "node_added"
+    assert hass.states.get("button.garage_reboot") is not None
+
+    emulator.devices = [d for d in emulator.devices if d["deviceID"] != "node-4"]
+    await _refresh(hass, coordinator, 3)
+    assert events[-1].data["type"] == "node_removed"
+    registry = dr.async_get(hass)
+    assert (
+        registry.async_get_device_by_identifier(
+            (DOMAIN, "12K10M44444444"), mock_entry.entry_id
+        )
+        is None
+    )
+
+
+async def test_firmware_update_event(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A newly available firmware raises one event and flips the update entity."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.firmware = [
+        {"deviceUUID": "node-2", "availableUpdate": {"firmwareVersion": "9.9.9"}}
+    ]
+    coordinator._slow_at = None  # force the slow tier due
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == ["firmware_update_available"]
+    update = hass.states.get("update.bedroom_firmware")
+    assert update.state == "on"
+    assert update.attributes["latest_version"] == "9.9.9"
+
+
+async def test_mode_change_reloads_once(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Router to bridge fires mode_changed and reloads the entry."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.wan_type = "Bridge"
+    await _refresh(hass, coordinator, 2)
+    await hass.async_block_till_done()
+    assert [e.data["type"] for e in events] == ["mode_changed"]
+    assert mock_entry.state is ConfigEntryState.LOADED
+    assert hass.states.get("sensor.living_room_connected_clients") is None
+
+
+async def test_reboot_button_and_cooldown(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """The hub button reboots the primary; repeats inside 60 s are refused."""
+    await _setup(hass, mock_entry)
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.living_room_reboot"}, blocking=True
+    )
+    assert emulator.reboots == [{"action": "core/Reboot"}]
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": "button.living_room_reboot"}, blocking=True
+        )
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.bedroom_reboot"}, blocking=True
+    )
+    assert emulator.reboots[-1] == {"action": "core/Reboot2"}
+
+
+async def test_reboot_connection_drop_is_success(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A dropped connection while rebooting is treated as success."""
+    await _setup(hass, mock_entry)
+    emulator.drop_on_reboot = True
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.living_room_reboot"}, blocking=True
+    )
+    assert emulator.reboots == [{"action": "dropped"}]
+
+
+async def test_services(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """reboot_node and refresh_now work; unknown devices are rejected."""
+    await _setup(hass, mock_entry)
+    registry = dr.async_get(hass)
+    child = registry.async_get_device_by_identifier(
+        (DOMAIN, "12K10M33333333"), mock_entry.entry_id
+    )
+    await hass.services.async_call(
+        DOMAIN, "reboot_node", {"device_id": child.id}, blocking=True
+    )
+    assert emulator.reboots == [{"action": "core/Reboot2"}]
+    emulator.calls.clear()
+    await hass.services.async_call(DOMAIN, "refresh_now", {}, blocking=True)
+    assert emulator.calls
+    other = registry.async_get_or_create(
+        config_entry_id=mock_entry.entry_id, identifiers={("other", "x")}
+    )
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "reboot_node", {"device_id": other.id}, blocking=True
+        )
+
+
+async def test_refresh_now_without_hub(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """refresh_now explains itself when nothing is loaded."""
+    mock_entry.add_to_hass(hass)
+    from custom_components.ha_linksys_velop import async_setup  # noqa: PLC0415
+
+    await async_setup(hass, {})
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "refresh_now", {}, blocking=True)
+
+
+async def test_unreachable_marks_unavailable_and_recovers(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Failures make entities unavailable with back-off, then recovery restores."""
+    coordinator = await _setup(hass, mock_entry)
+    base = coordinator.update_interval
+    emulator.status_override = 500
+    await _refresh(hass, coordinator, 3)
+    assert hass.states.get("sensor.living_room_wan_status").state == "unavailable"
+    assert coordinator.update_interval > base
+    assert coordinator.update_interval.total_seconds() <= 330
+    emulator.status_override = None
+    await _refresh(hass, coordinator)
+    assert hass.states.get("sensor.living_room_wan_status").state == "connected"
+    assert coordinator.update_interval == base
+
+
+async def test_auth_failure_starts_reauth(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A rejected password mid-run raises reauth and fires an event once."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.password = "changed-password"  # noqa: S105
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == ["authentication_failed"]
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [f["context"]["source"] for f in flows] == ["reauth"]
+
+
+async def test_account_locked_creates_repair(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A locked account raises a repair issue instead of retrying."""
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    coordinator = await _setup(hass, mock_entry)
+    emulator.password = "changed-password"  # noqa: S105
+    emulator.locked = True
+    await _refresh(hass, coordinator)
+    issue = ir.async_get(hass).async_get_issue(
+        DOMAIN, f"account_locked_{PRIMARY_SERIAL}"
+    )
+    assert issue is not None
+
+
+async def test_setup_retry_when_unreachable(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """An unreachable hub leaves the entry retrying, not failed."""
+    emulator.status_override = 500
+    mock_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_entry.entry_id)
+    assert mock_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_setup_wrong_hub_retry(
+    hass: HomeAssistant, entry_data: dict[str, object], emulator: Emulator
+) -> None:
+    """An entry whose serial no longer matches the endpoint does not load."""
+    entry = MockConfigEntry(domain=DOMAIN, data=entry_data, unique_id="OTHER-SERIAL")
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_setup_child_node_retry(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Pointing at a child node (not master) never loads."""
+    emulator.mode = "slave"
+    mock_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_entry.entry_id)
+    assert mock_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_setup_wrong_password_reauth(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A wrong stored password triggers setup error + reauth."""
+    emulator.password = "other-password"  # noqa: S105
+    mock_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_entry.entry_id)
+    assert mock_entry.state is ConfigEntryState.SETUP_ERROR
+    assert hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+
+
+async def test_excluded_child_not_created(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Children left out in options never become devices."""
+    mock_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_entry, options={"included_children": ["12K10M22222222"]}
+    )
+    await _setup(hass, mock_entry)
+    assert hass.states.get("button.bedroom_reboot") is not None
+    assert hass.states.get("button.office_reboot") is None
+
+
+async def test_area_assigned_on_first_creation_only(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Areas apply when the device is created and survive later edits."""
+    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+    area = ar.async_get(hass).async_create("Bedroom area")
+    other = ar.async_get(hass).async_create("Elsewhere")
+    mock_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_entry, options={"areas": {"12K10M22222222": area.id}}
+    )
+    coordinator = await _setup(hass, mock_entry)
+    registry = dr.async_get(hass)
+    device = registry.async_get_device_by_identifier(
+        (DOMAIN, "12K10M22222222"), mock_entry.entry_id
+    )
+    assert device.area_id == area.id
+    registry.async_update_device(device.id, area_id=other.id)
+    await _refresh(hass, coordinator)
+    assert registry.async_get(device.id).area_id == other.id
+
+
+async def test_diagnostics_redacted(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Diagnostics contain counts but no password, host, serial or MAC."""
+    from custom_components.ha_linksys_velop.diagnostics import (  # noqa: PLC0415
+        async_get_config_entry_diagnostics,
+    )
+
+    await _setup(hass, mock_entry)
+    data = await async_get_config_entry_diagnostics(hass, mock_entry)
+    text = repr(data)
+    assert data["node_count"] == 3
+    assert data["mode"] == "router"
+    for secret in ("example-password", "127.0.0.1", PRIMARY_SERIAL, "AA:BB:CC"):
+        assert secret not in text
+
+
+async def test_device_removal_guard(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Present nodes cannot be deleted; unknown devices can."""
+    from custom_components.ha_linksys_velop import (  # noqa: PLC0415
+        async_remove_config_entry_device,
+    )
+
+    await _setup(hass, mock_entry)
+    registry = dr.async_get(hass)
+    live = registry.async_get_device_by_identifier(
+        (DOMAIN, PRIMARY_SERIAL), mock_entry.entry_id
+    )
+    assert not await async_remove_config_entry_device(hass, mock_entry, live)
+    ghost = registry.async_get_or_create(
+        config_entry_id=mock_entry.entry_id, identifiers={(DOMAIN, "GHOST")}
+    )
+    assert await async_remove_config_entry_device(hass, mock_entry, ghost)
+
+
+async def test_password_never_logged(
+    hass: HomeAssistant,
+    mock_entry: MockConfigEntry,
+    emulator: Emulator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Debug logs across setup, failure and recovery never contain secrets."""
+    caplog.set_level("DEBUG")
+    coordinator = await _setup(hass, mock_entry)
+    emulator.status_override = 500
+    await _refresh(hass, coordinator)
+    emulator.status_override = None
+    emulator.password = "changed-password"  # noqa: S105
+    await _refresh(hass, coordinator)
+    assert "example-password" not in caplog.text
+    assert "changed-password" not in caplog.text
+    assert "ZXhhbXBsZS1wYXNzd29yZA" not in caplog.text
+
+
+async def test_reboot_failure_paths(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Auth failure starts reauth; other failures are reported and retryable."""
+    coordinator = await _setup(hass, mock_entry)
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_reboot_node("UNKNOWN")
+    emulator.unknown_actions = {"http://linksys.com/jnap/core/Reboot"}
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_reboot_node(PRIMARY_SERIAL)
+    emulator.unknown_actions = set()
+    await coordinator.async_reboot_node(PRIMARY_SERIAL)  # cooldown cleared on failure
+    coordinator._reboot_at.clear()
+    emulator.password = "changed-password"  # noqa: S105
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_reboot_node(PRIMARY_SERIAL)
+    await hass.async_block_till_done()
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [f["context"]["source"] for f in flows] == ["reauth"]
+
+
+async def test_vanished_node_entities_unavailable(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A node missing for one refresh makes its entities unavailable, not stale."""
+    coordinator = await _setup(hass, mock_entry)
+    emulator.devices = [d for d in emulator.devices if d["deviceID"] != "node-3"]
+    await _refresh(hass, coordinator)
+    assert hass.states.get("sensor.office_ip_address").state == "unavailable"
+    assert hass.states.get("update.office_firmware").state == "unavailable"
+
+
+async def test_setup_account_locked_reauth(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A locked account during identity lookup starts reauth."""
+    emulator.require_auth_for_info = True
+    emulator.locked = True
+    mock_entry.add_to_hass(hass)
+    mock_entry.data  # noqa: B018
+    await hass.config_entries.async_setup(mock_entry.entry_id)
+    assert mock_entry.state is ConfigEntryState.SETUP_ERROR
+
+
+async def test_tracker_consider_home_window(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A departed client stays home inside the window, then goes away."""
+    from custom_components.ha_linksys_velop.device_tracker import (  # noqa: PLC0415
+        VelopTracker,
+    )
+
+    mock_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_entry,
+        options={OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"], "consider_home": 0},
+    )
+    coordinator = await _setup(hass, mock_entry)
+    emulator.devices[3]["connections"] = []
+    await _refresh(hass, coordinator, 2)
+    assert hass.states.get("device_tracker.client_1").state == "not_home"
+    entity = VelopTracker.__new__(VelopTracker)
+    entity._last_seen = None
+    entity._mac = "zz"
+    entity._consider_home = 10
+    entity.coordinator = coordinator
+    assert entity.is_connected is False

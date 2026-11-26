@@ -1,0 +1,29 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: home-assistant/actions/hassfest@9e9565e68f5a70d874202871f4c4064d23814235
+
+  hacs:
+    name: HACS / Marketplace validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa
+        with:
+          category: integration

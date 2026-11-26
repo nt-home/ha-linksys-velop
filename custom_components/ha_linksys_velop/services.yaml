@@ -1,0 +1,9 @@
+reboot_node:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          multiple: true
+          integration: ha_linksys_velop
+refresh_now:
