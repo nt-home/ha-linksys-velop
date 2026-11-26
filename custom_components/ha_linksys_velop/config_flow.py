@@ -127,6 +127,11 @@ def _slot_key(text: str, slot: int) -> str:
     return text + "\u200b" * slot
 
 
+def _name_key(slot: int) -> str:
+    """Form key of a node's name input, displayed as "Name"."""
+    return _slot_key("Name", slot)
+
+
 def _area_key(slot: int) -> str:
     """Form key of a node's area picker, displayed as "Assign area"."""
     return _slot_key("Assign area", slot)
@@ -393,15 +398,16 @@ class VelopOptionsFlow(OptionsFlowWithReload):
         fields: dict[Any, Any] = {}
         for slot, node in enumerate(nodes, 1):
             label = labels[node.serial]
+            # A literal value is serialised as a constant: the frontend draws it
+            # as plain text, which gives each node a title above its inputs.
+            fields[probatio.Optional(label)] = label
             device = registry.async_get_device_by_identifier(
                 (DOMAIN, node.serial), self.config_entry.entry_id
             )
             name = (device.name_by_user if device else None) or node.name
             area = device.area_id if device and device.area_id else None
             area = area or saved_areas.get(node.serial)
-            # The node's own title labels its first input; the area picker and
-            # remove switch use the same translated labels under every node.
-            fields[probatio.Optional(label, default=name)] = TextSelector()
+            fields[probatio.Optional(_name_key(slot), default=name)] = TextSelector()
             area_key = _area_key(slot)
             fields[
                 probatio.Optional(area_key, description={"suggested_value": area})
@@ -468,8 +474,8 @@ class VelopOptionsFlow(OptionsFlowWithReload):
         """Store a changed node name as the device's user-chosen name."""
         registry = dr.async_get(self.hass)
         mesh = user_input.get(SECTION_NODES, {})
-        for node in nodes:
-            wanted = str(mesh.get(labels[node.serial], "")).strip()
+        for slot, node in enumerate(nodes, 1):
+            wanted = str(mesh.get(_name_key(slot), "")).strip()
             device = registry.async_get_device_by_identifier(
                 (DOMAIN, node.serial), self.config_entry.entry_id
             )

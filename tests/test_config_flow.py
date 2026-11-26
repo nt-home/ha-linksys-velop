@@ -538,7 +538,7 @@ def _k(label: str, field: str) -> str:
     """Form key of a node field: the node label, or its numbered Area/Remove key."""
     slot = next(i for i, name in LABELS.items() if name == label)
     return {
-        "Name": label,
+        "Name": config_flow._name_key(slot),
         "Area": config_flow._area_key(slot),
         "Remove node": config_flow._remove_key(slot),
     }[field]
@@ -578,18 +578,29 @@ async def test_options_flow_full(
     # Each node: its title as the first input's label, then area and (for
     # child nodes only) the remove switch.
     assert list(mesh) == [
+        LABEL_1,
         _k(LABEL_1, "Name"),
         _k(LABEL_1, "Area"),
+        LABEL_2,
         _k(LABEL_2, "Name"),
         _k(LABEL_2, "Area"),
         _k(LABEL_2, "Remove node"),
+        LABEL_3,
         _k(LABEL_3, "Name"),
         _k(LABEL_3, "Area"),
         _k(LABEL_3, "Remove node"),
     ]
-    # Unique keys, but every node shows the same visible labels.
+    # Unique keys, but every node shows the same visible input labels; the
+    # node title rows are literal constants.
     shown = {k.replace("\u200b", "") for k in mesh}
-    assert shown == {LABEL_1, LABEL_2, LABEL_3, "Assign area", "Remove node"}
+    assert shown == {
+        LABEL_1,
+        LABEL_2,
+        LABEL_3,
+        "Name",
+        "Assign area",
+        "Remove node",
+    }
     assert mesh[_k(LABEL_2, "Remove node")].default() is False
     assert mesh[_k(LABEL_2, "Name")].default() == "Bedroom"
     assert set(cards["presence"]) == {
@@ -669,6 +680,7 @@ async def test_options_flow_full(
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
             "nodes": {
+                LABEL_1: LABEL_1,
                 _k(LABEL_1, "Name"): "Living Room",
                 _k(LABEL_2, "Name"): "Bedroom",
                 _k(LABEL_2, "Area"): den.id,
@@ -776,4 +788,6 @@ async def test_options_form_serialises_for_the_frontend(
     nodes = next(f for f in fields if f["name"] == "nodes")
     # Home Assistant does not support nesting sections, so every field is flat.
     assert all(f.get("type") != "expandable" for f in nodes["schema"])
-    assert len(nodes["schema"]) == 8
+    titles = [f for f in nodes["schema"] if f.get("type") == "constant"]
+    assert [f["value"] for f in titles] == [LABEL_1, LABEL_2, LABEL_3]
+    assert len(nodes["schema"]) == 11
