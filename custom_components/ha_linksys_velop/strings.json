@@ -81,7 +81,7 @@
           },
           "nodes": {
             "name": "Mesh nodes",
-            "description": "Each node's title is its name: edit it to rename the node, then give it an area. Switch on Remove node to take a child node out of Home Assistant; switch it off again later to bring it back."
+            "description": "Rename each node and give it an area. Switch on Remove node to take a child node out of Home Assistant; switch it off again later to bring it back."
           },
           "presence": {
             "name": "Presence tracking",

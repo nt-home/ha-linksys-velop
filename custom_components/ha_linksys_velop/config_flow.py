@@ -128,8 +128,8 @@ def _slot_key(text: str, slot: int) -> str:
 
 
 def _area_key(slot: int) -> str:
-    """Form key of a node's area picker, displayed as "Area"."""
-    return _slot_key("Area", slot)
+    """Form key of a node's area picker, displayed as "Assign area"."""
+    return _slot_key("Assign area", slot)
 
 
 def _remove_key(slot: int) -> str:

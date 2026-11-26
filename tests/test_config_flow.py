@@ -6,6 +6,7 @@ import socket
 from typing import Any
 from unittest.mock import patch
 
+import probatio
 import pytest
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
@@ -13,6 +14,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant.common import MockConfigEntry
 
@@ -587,7 +589,7 @@ async def test_options_flow_full(
     ]
     # Unique keys, but every node shows the same visible labels.
     shown = {k.replace("\u200b", "") for k in mesh}
-    assert shown == {LABEL_1, LABEL_2, LABEL_3, "Area", "Remove node"}
+    assert shown == {LABEL_1, LABEL_2, LABEL_3, "Assign area", "Remove node"}
     assert mesh[_k(LABEL_2, "Remove node")].default() is False
     assert mesh[_k(LABEL_2, "Name")].default() == "Bedroom"
     assert set(cards["presence"]) == {
@@ -756,5 +758,22 @@ def test_slot_keys_are_unique_but_display_identically() -> None:
     areas = {config_flow._area_key(i) for i in range(1, 20)}
     removes = {config_flow._remove_key(i) for i in range(1, 20)}
     assert len(areas) == len(removes) == 19
-    assert {k.replace("\u200b", "") for k in areas} == {"Area"}
+    assert {k.replace("\u200b", "") for k in areas} == {"Assign area"}
     assert {k.replace("\u200b", "") for k in removes} == {"Remove node"}
+
+
+async def test_options_form_serialises_for_the_frontend(
+    hass: HomeAssistant, emulator: Emulator, mock_entry: MockConfigEntry
+) -> None:
+    """The options form converts to the field list the frontend receives."""
+    await _setup(hass, mock_entry)
+    form = await hass.config_entries.options.async_init(mock_entry.entry_id)
+    fields = probatio.to_field_list(
+        form["data_schema"], custom_serializer=cv.custom_serializer
+    )
+    assert [f["name"] for f in fields] == ["refresh", "nodes", "presence"]
+    assert all(f["type"] == "expandable" for f in fields)
+    nodes = next(f for f in fields if f["name"] == "nodes")
+    # Home Assistant does not support nesting sections, so every field is flat.
+    assert all(f["type"] != "expandable" for f in nodes["schema"])
+    assert len(nodes["schema"]) == 8
