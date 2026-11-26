@@ -81,10 +81,14 @@ class VelopClient:
     async def async_validate_credentials(self) -> None:
         """Check the admin credentials with an authenticated action.
 
-        GetDevices needs the admin password and no other input, unlike
-        CheckAdminPassword which expects the password inside its request.
+        Sent as a transaction, like every refresh: some firmware answers a
+        standalone call with a generic error. Only authentication and lock
+        results are fatal here; the node fetch reports any other problem.
         """
-        await self._transport.async_call(ACTION_GET_DEVICES, {"sinceRevision": 0})
+        responses = await self._transport.async_transaction(
+            [JnapAction(ACTION_GET_DEVICES, {"sinceRevision": 0})]
+        )
+        _raise_if_fatal(responses[0])
 
     async def async_fetch_fast(self, identity: HubIdentity) -> FastSnapshot:
         """Fetch WAN status, nodes and clients in one transaction."""

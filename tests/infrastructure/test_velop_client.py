@@ -194,17 +194,19 @@ async def test_validate_wrong_password(
         await client.async_validate_credentials()
 
 
-async def test_validate_sends_since_revision() -> None:
-    """Validation is an authenticated GetDevices with sinceRevision 0."""
-    client, transport = fake({"devicelist/GetDevices": {}})
+async def test_validate_tolerates_generic_error() -> None:
+    """A generic non-auth result inside the transaction does not fail setup."""
+    client, _ = fake(transaction=[err("Error")])
     await client.async_validate_credentials()
-    assert transport.log[-1] == ("devicelist/GetDevices", {"sinceRevision": 0}, None)
 
 
-async def test_validate_error_propagates() -> None:
-    """Transport errors during validation propagate."""
-    client, _ = fake({"devicelist/GetDevices": CannotConnectError()})
-    with pytest.raises(CannotConnectError):
+async def test_validate_auth_result_is_fatal() -> None:
+    """Auth and lock results inside the transaction still fail validation."""
+    client, _ = fake(transaction=[err("_ErrorUnauthorized")])
+    with pytest.raises(InvalidAuthError):
+        await client.async_validate_credentials()
+    client, _ = fake(transaction=[err("ErrorAdminAccountLocked")])
+    with pytest.raises(AccountLockedError):
         await client.async_validate_credentials()
 
 
