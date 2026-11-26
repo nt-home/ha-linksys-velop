@@ -529,6 +529,11 @@ async def test_reauth_wrong_hub(
 # --------------------------------------------------------------------------
 
 
+def _k(label: str, field: str) -> str:
+    """Form key of a node field inside the Mesh nodes card."""
+    return f"{label}: {field}"
+
+
 def _cards(form: Any) -> dict[str, dict[str, Any]]:
     """Map section name to its inner fields for an options form."""
     return {
@@ -556,13 +561,21 @@ async def test_options_flow_full(
     assert form["type"] is FlowResultType.FORM
     assert form["step_id"] == "init"
     cards = _cards(form)
-    assert list(cards) == ["refresh", LABEL_1, LABEL_2, LABEL_3, "presence"]
+    assert list(cards) == ["refresh", "nodes", "presence"]
     assert set(cards["refresh"]) == {OPT_FAST_INTERVAL, OPT_SLOW_INTERVAL}
     # The primary node has no remove switch; child nodes do, default off.
-    assert set(cards[LABEL_1]) == {"Name", "Area"}
-    assert set(cards[LABEL_2]) == {"Name", "Area", "Remove node"}
-    assert cards[LABEL_2]["Remove node"].default() is False
-    assert cards[LABEL_2]["Name"].default() == "Bedroom"
+    mesh = cards["nodes"]
+    assert {k for k in mesh if k.startswith(LABEL_1)} == {
+        _k(LABEL_1, "Name"),
+        _k(LABEL_1, "Area"),
+    }
+    assert {k for k in mesh if k.startswith(LABEL_2)} == {
+        _k(LABEL_2, "Name"),
+        _k(LABEL_2, "Area"),
+        _k(LABEL_2, "Remove node"),
+    }
+    assert mesh[_k(LABEL_2, "Remove node")].default() is False
+    assert mesh[_k(LABEL_2, "Name")].default() == "Bedroom"
     assert set(cards["presence"]) == {
         OPT_TRACK_ALL,
         OPT_TRACKED_CLIENTS,
@@ -580,9 +593,15 @@ async def test_options_flow_full(
         form["flow_id"],
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            LABEL_1: {"Name": "Hall hub"},
-            LABEL_2: {"Name": "Bedroom", "Area": den.id, "Remove node": False},
-            LABEL_3: {"Name": "Office", "Area": cellar.id, "Remove node": True},
+            "nodes": {
+                _k(LABEL_1, "Name"): "Hall hub",
+                _k(LABEL_2, "Name"): "Bedroom",
+                _k(LABEL_2, "Area"): den.id,
+                _k(LABEL_2, "Remove node"): False,
+                _k(LABEL_3, "Name"): "Office",
+                _k(LABEL_3, "Area"): cellar.id,
+                _k(LABEL_3, "Remove node"): True,
+            },
             "presence": {
                 OPT_TRACK_ALL: False,
                 OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
@@ -621,21 +640,26 @@ async def test_options_flow_full(
     # be brought back; an unchanged name is not stored as a user name.
     form = await hass.config_entries.options.async_init(mock_entry.entry_id)
     cards = _cards(form)
-    assert list(cards) == ["refresh", LABEL_1, LABEL_2, LABEL_3, "presence"]
-    assert cards[LABEL_3]["Remove node"].default() is True
-    assert cards[LABEL_1]["Name"].default() == "Hall hub"
+    assert list(cards) == ["refresh", "nodes", "presence"]
+    assert cards["nodes"][_k(LABEL_3, "Remove node")].default() is True
+    assert cards["nodes"][_k(LABEL_1, "Name")].default() == "Hall hub"
     suggested = {
         str(k): (k.description or {}).get("suggested_value")
-        for k in _sections(form)[LABEL_3].schema.schema
+        for k in _sections(form)["nodes"].schema.schema
     }
-    assert suggested["Area"] == cellar.id
+    assert suggested[_k(LABEL_3, "Area")] == cellar.id
     result = await hass.config_entries.options.async_configure(
         form["flow_id"],
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            LABEL_1: {"Name": "Living Room"},
-            LABEL_2: {"Name": "Bedroom", "Area": den.id, "Remove node": False},
-            LABEL_3: {"Name": "Office", "Remove node": False},
+            "nodes": {
+                _k(LABEL_1, "Name"): "Living Room",
+                _k(LABEL_2, "Name"): "Bedroom",
+                _k(LABEL_2, "Area"): den.id,
+                _k(LABEL_2, "Remove node"): False,
+                _k(LABEL_3, "Name"): "Office",
+                _k(LABEL_3, "Remove node"): False,
+            },
             "presence": {OPT_TRACK_ALL: True, OPT_CONSIDER_HOME: 60},
         },
     )
@@ -667,9 +691,10 @@ async def test_options_flow_area_for_unknown_device(
         form["flow_id"],
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            LABEL_1: {},
-            LABEL_2: {"Name": "Renamed", "Area": area.id},
-            LABEL_3: {},
+            "nodes": {
+                _k(LABEL_2, "Name"): "Renamed",
+                _k(LABEL_2, "Area"): area.id,
+            },
             "presence": {},
         },
     )
