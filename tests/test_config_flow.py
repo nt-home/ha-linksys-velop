@@ -529,35 +529,47 @@ async def test_reauth_wrong_hub(
 # --------------------------------------------------------------------------
 
 
+def _cards(form: Any) -> dict[str, dict[str, Any]]:
+    """Map section name to its inner fields for an options form."""
+    return {
+        str(k): {str(i): i for i in v.schema.schema}
+        for k, v in form["data_schema"].schema.items()
+    }
+
+
+def _sections(form: Any) -> dict[str, Any]:
+    return {str(k): v for k, v in form["data_schema"].schema.items()}
+
+
 async def test_options_flow_full(
     hass: HomeAssistant, emulator: Emulator, mock_entry: MockConfigEntry
 ) -> None:
-    """Options show the snapshot, are saved, push areas and reload."""
+    """One card per node; names, areas and removal are saved and applied."""
     await _setup(hass, mock_entry)
     assert mock_entry.state is ConfigEntryState.LOADED
     areas = ar.async_get(hass)
     den = areas.async_create("Den")
     cellar = areas.async_create("Cellar")
     devices = dr.async_get(hass)
-    bedroom = devices.async_get_device_by_identifier(
-        (DOMAIN, CHILD_2), mock_entry.entry_id
-    )
-    assert bedroom is not None
 
     form = await hass.config_entries.options.async_init(mock_entry.entry_id)
     assert form["type"] is FlowResultType.FORM
     assert form["step_id"] == "init"
-    top = form["data_schema"].schema
-    assert [str(k) for k in top] == ["refresh", "nodes", "presence"]
-    sections = {str(k): v.schema.schema for k, v in top.items()}
-    refresh = {str(k) for k in sections["refresh"]}
-    assert refresh == {OPT_FAST_INTERVAL, OPT_SLOW_INTERVAL}
-    mesh = {str(k): k for k in sections["nodes"]}
-    assert set(mesh) == {OPT_INCLUDED_CHILDREN, LABEL_1, LABEL_2, LABEL_3}
-    assert mesh[OPT_INCLUDED_CHILDREN].default() == [CHILD_2, CHILD_3]
-    presence = {str(k): k for k in sections["presence"]}
-    assert set(presence) == {OPT_TRACK_ALL, OPT_TRACKED_CLIENTS, OPT_CONSIDER_HOME}
-    client_opts = sections["presence"][presence[OPT_TRACKED_CLIENTS]].config["options"]
+    cards = _cards(form)
+    assert list(cards) == ["refresh", LABEL_1, LABEL_2, LABEL_3, "presence"]
+    assert set(cards["refresh"]) == {OPT_FAST_INTERVAL, OPT_SLOW_INTERVAL}
+    # The primary node has no remove switch; child nodes do, default off.
+    assert set(cards[LABEL_1]) == {"Name", "Area"}
+    assert set(cards[LABEL_2]) == {"Name", "Area", "Remove node"}
+    assert cards[LABEL_2]["Remove node"].default() is False
+    assert cards[LABEL_2]["Name"].default() == "Bedroom"
+    assert set(cards["presence"]) == {
+        OPT_TRACK_ALL,
+        OPT_TRACKED_CLIENTS,
+        OPT_CONSIDER_HOME,
+    }
+    inner = _sections(form)["presence"].schema.schema
+    client_opts = inner[cards["presence"][OPT_TRACKED_CLIENTS]].config["options"]
     assert {o["value"] for o in client_opts} == {
         "aa:bb:cc:00:00:01",
         "aa:bb:cc:00:00:02",
@@ -568,11 +580,9 @@ async def test_options_flow_full(
         form["flow_id"],
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            "nodes": {
-                OPT_INCLUDED_CHILDREN: [CHILD_3],
-                LABEL_2: den.id,
-                LABEL_3: cellar.id,
-            },
+            LABEL_1: {"Name": "Hall hub"},
+            LABEL_2: {"Name": "Bedroom", "Area": den.id, "Remove node": False},
+            LABEL_3: {"Name": "Office", "Area": cellar.id, "Remove node": True},
             "presence": {
                 OPT_TRACK_ALL: False,
                 OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
@@ -589,47 +599,61 @@ async def test_options_flow_full(
         OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
         OPT_CONSIDER_HOME: 120,
         OPT_AREAS: {CHILD_2: den.id, CHILD_3: cellar.id},
-        OPT_INCLUDED_CHILDREN: [CHILD_3],
+        OPT_INCLUDED_CHILDREN: [CHILD_2],
     }
     assert mock_entry.state is ConfigEntryState.LOADED
+    hub = devices.async_get_device_by_identifier(
+        (DOMAIN, PRIMARY_SERIAL), mock_entry.entry_id
+    )
+    assert hub is not None
+    assert hub.name_by_user == "Hall hub"
     bedroom = devices.async_get_device_by_identifier(
         (DOMAIN, CHILD_2), mock_entry.entry_id
     )
-    if bedroom is not None:
-        assert bedroom.area_id == den.id
-
-    # Second pass: unchanged areas are skipped, saved area is a suggestion,
-    # track_all and a missing device are tolerated.
-    form = await hass.config_entries.options.async_init(mock_entry.entry_id)
-    nodes_section = next(
-        v for k, v in form["data_schema"].schema.items() if str(k) == "nodes"
+    assert bedroom is not None and bedroom.area_id == den.id
+    # The removed child is gone from the registry.
+    assert (
+        devices.async_get_device_by_identifier((DOMAIN, CHILD_3), mock_entry.entry_id)
+        is None
     )
+
+    # Second pass: the removed node is still offered (switched on) so it can
+    # be brought back; an unchanged name is not stored as a user name.
+    form = await hass.config_entries.options.async_init(mock_entry.entry_id)
+    cards = _cards(form)
+    assert list(cards) == ["refresh", LABEL_1, LABEL_2, LABEL_3, "presence"]
+    assert cards[LABEL_3]["Remove node"].default() is True
+    assert cards[LABEL_1]["Name"].default() == "Hall hub"
     suggested = {
         str(k): (k.description or {}).get("suggested_value")
-        for k in nodes_section.schema.schema
+        for k in _sections(form)[LABEL_3].schema.schema
     }
-    # Bedroom is now excluded from the snapshot, so only Office is offered.
-    assert LABEL_2 not in suggested
-    assert suggested[LABEL_3] == cellar.id
+    assert suggested["Area"] == cellar.id
     result = await hass.config_entries.options.async_configure(
         form["flow_id"],
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            "nodes": {OPT_INCLUDED_CHILDREN: [CHILD_3], LABEL_3: cellar.id},
+            LABEL_1: {"Name": "Living Room"},
+            LABEL_2: {"Name": "Bedroom", "Area": den.id, "Remove node": False},
+            LABEL_3: {"Name": "Office", "Remove node": False},
             "presence": {OPT_TRACK_ALL: True, OPT_CONSIDER_HOME: 60},
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
+    assert mock_entry.options[OPT_INCLUDED_CHILDREN] == [CHILD_2, CHILD_3]
+    assert mock_entry.options[OPT_AREAS] == {CHILD_2: den.id}
     assert mock_entry.options[OPT_TRACK_ALL] is True
-    # Omitted fields fall back to the stored value via the form default.
-    assert mock_entry.options[OPT_TRACKED_CLIENTS] == ["aa:bb:cc:00:00:01"]
+    hub = devices.async_get_device_by_identifier(
+        (DOMAIN, PRIMARY_SERIAL), mock_entry.entry_id
+    )
+    assert hub is not None and hub.name_by_user is None
 
 
 async def test_options_flow_area_for_unknown_device(
     hass: HomeAssistant, emulator: Emulator, mock_entry: MockConfigEntry
 ) -> None:
-    """An area for a node with no registered device is silently skipped."""
+    """A node with no registered device is skipped when applying names and areas."""
     await _setup(hass, mock_entry)
     area = ar.async_get(hass).async_create("Hall")
     registry = dr.async_get(hass)
@@ -643,7 +667,9 @@ async def test_options_flow_area_for_unknown_device(
         form["flow_id"],
         {
             "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            "nodes": {LABEL_2: area.id},
+            LABEL_1: {},
+            LABEL_2: {"Name": "Renamed", "Area": area.id},
+            LABEL_3: {},
             "presence": {},
         },
     )
@@ -665,19 +691,12 @@ async def test_options_flow_without_runtime_data(
     )
     entry.add_to_hass(hass)
     form = await hass.config_entries.options.async_init(entry.entry_id)
-    inner = {
-        str(k): {str(i) for i in v.schema.schema}
-        for k, v in form["data_schema"].schema.items()
-    }
-    assert OPT_INCLUDED_CHILDREN not in inner["nodes"]
-    assert OPT_TRACKED_CLIENTS not in inner["presence"]
+    cards = _cards(form)
+    assert list(cards) == ["refresh", "presence"]
+    assert OPT_TRACKED_CLIENTS not in cards["presence"]
     result = await hass.config_entries.options.async_configure(
         form["flow_id"],
-        {
-            "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
-            "nodes": {},
-            "presence": {},
-        },
+        {"refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20}, "presence": {}},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     if prior:

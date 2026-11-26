@@ -79,16 +79,6 @@
               "slow_interval": "Firmware status and CPU and memory load (5-1440)."
             }
           },
-          "nodes": {
-            "name": "Mesh nodes",
-            "description": "Choose the child nodes to keep and give each node an area. Unselected child nodes are removed from Home Assistant.",
-            "data": {
-              "included_children": "Child nodes to include"
-            },
-            "data_description": {
-              "included_children": "The primary node is always included."
-            }
-          },
           "presence": {
             "name": "Presence tracking",
             "description": "Optional device trackers for clients on your network (router mode only). Client names and addresses then appear in Home Assistant.",
@@ -103,7 +93,8 @@
               "consider_home": "How long a client stays home after it disconnects."
             }
           }
-        }
+        },
+        "description": "Each mesh node has its own card with a name and an area. Switch on **Remove node** on a child node to take it out of Home Assistant; switch it off again later to bring it back."
       }
     }
   },

@@ -80,6 +80,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         )
         self._slow: SlowSnapshot | None = None
         self._slow_at: float | None = None
+        self.all_nodes: tuple[Node, ...] = ()
         self._failures = 0
         self._detector = EventDetector()
         self._event_listeners: list[Callable[[VelopEvent], None]] = []
@@ -134,6 +135,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         ir.async_delete_issue(
             self.hass, DOMAIN, f"{ISSUE_ACCOUNT_LOCKED}_{self.identity.serial}"
         )
+        self.all_nodes = fast.nodes
         snapshot = HubSnapshot(
             identity=self.identity,
             wan=fast.wan,
@@ -142,7 +144,8 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             firmware=slow.firmware,
             stats=slow.stats,
         )
-        self._publish(snapshot)
+        excluded = {n.serial for n in fast.nodes} - {n.serial for n in snapshot.nodes}
+        self._publish(snapshot, excluded)
         return snapshot
 
     async def _async_slow(self) -> SlowSnapshot:
@@ -179,9 +182,10 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         jitter = random.uniform(0, backoff * 0.1)  # noqa: S311
         self.update_interval = timedelta(seconds=max(self._fast, backoff + jitter))
 
-    def _publish(self, snapshot: HubSnapshot) -> None:
+    def _publish(self, snapshot: HubSnapshot, excluded: set[str]) -> None:
         events, removed = self._detector.update(snapshot)
-        self._sync_devices(snapshot, removed)
+        # Nodes the user switched off in the options leave Home Assistant too.
+        self._sync_devices(snapshot, [*removed, *sorted(excluded)])
         for event in events:
             self._fire(event)
             if event.type is EventType.MODE_CHANGED and not self._mode_reload:

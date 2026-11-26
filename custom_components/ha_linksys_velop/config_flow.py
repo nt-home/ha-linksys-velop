@@ -69,7 +69,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SECTION_REFRESH = "refresh"
-SECTION_NODES = "nodes"
+FIELD_NAME = "Name"
+FIELD_AREA = "Area"
+FIELD_REMOVE = "Remove node"
 SECTION_PRESENCE = "presence"
 
 _PASSWORD = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
@@ -276,16 +278,16 @@ class VelopOptionsFlow(OptionsFlowWithReload):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit options, grouped into refresh, mesh nodes and presence."""
+        """Edit options: refresh, one card per mesh node, then presence."""
         entry = self.config_entry
-        snapshot = entry.runtime_data.data if hasattr(entry, "runtime_data") else None
-        nodes = snapshot.nodes if snapshot else ()
-        clients = snapshot.clients if snapshot else ()
+        coordinator = getattr(entry, "runtime_data", None)
+        nodes = coordinator.all_nodes if coordinator else ()
+        clients = coordinator.data.clients if coordinator else ()
         labels = {n.serial: _node_label(n) for n in nodes}
-        children = [n for n in nodes if n.role is NodeRole.CHILD]
         if user_input is not None:
-            options = self._build_options(user_input, labels)
+            options = self._build_options(user_input, nodes, labels)
             self._apply_areas(options[OPT_AREAS], entry.options.get(OPT_AREAS, {}))
+            self._apply_names(user_input, nodes, labels)
             return self.async_create_entry(data=options)
 
         opts = entry.options
@@ -315,30 +317,12 @@ class VelopOptionsFlow(OptionsFlowWithReload):
                 )
             ),
         }
-        mesh: dict[Any, Any] = {}
-        if children:
-            current = opts.get(OPT_INCLUDED_CHILDREN, [n.serial for n in children])
-            mesh[probatio.Optional(OPT_INCLUDED_CHILDREN, default=current)] = (
-                SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(value=n.serial, label=labels[n.serial])
-                            for n in children
-                        ],
-                        multiple=True,
-                    )
-                )
+        schema: dict[Any, Any] = {
+            probatio.Required(SECTION_REFRESH): section(
+                probatio.Schema(refresh), {"collapsed": False}
             )
-        saved_areas = opts.get(OPT_AREAS, {})
-        for serial, label in labels.items():
-            key = (
-                probatio.Optional(
-                    label, description={"suggested_value": saved_areas[serial]}
-                )
-                if serial in saved_areas
-                else probatio.Optional(label)
-            )
-            mesh[key] = AreaSelector()
+        }
+        schema.update(self._node_cards(nodes, labels))
         presence: dict[Any, Any] = {
             probatio.Optional(
                 OPT_TRACK_ALL, default=opts.get(OPT_TRACK_ALL, False)
@@ -371,25 +355,53 @@ class VelopOptionsFlow(OptionsFlowWithReload):
                 mode=NumberSelectorMode.BOX,
             )
         )
-        schema: dict[Any, Any] = {
-            probatio.Required(SECTION_REFRESH): section(
-                probatio.Schema(refresh), {"collapsed": False}
-            ),
-            probatio.Required(SECTION_NODES): section(
-                probatio.Schema(mesh), {"collapsed": False}
-            ),
-            probatio.Required(SECTION_PRESENCE): section(
-                probatio.Schema(presence), {"collapsed": True}
-            ),
-        }
+        schema[probatio.Required(SECTION_PRESENCE)] = section(
+            probatio.Schema(presence), {"collapsed": True}
+        )
         return self.async_show_form(step_id="init", data_schema=probatio.Schema(schema))
 
+    def _node_cards(
+        self, nodes: tuple[Node, ...], labels: dict[str, str]
+    ) -> dict[Any, Any]:
+        """Build one card (section) per node: name, area and a remove switch."""
+        opts = self.config_entry.options
+        included = opts.get(OPT_INCLUDED_CHILDREN)
+        saved_areas = opts.get(OPT_AREAS, {})
+        registry = dr.async_get(self.hass)
+        cards: dict[Any, Any] = {}
+        for node in nodes:
+            device = registry.async_get_device_by_identifier(
+                (DOMAIN, node.serial), self.config_entry.entry_id
+            )
+            name = (device.name_by_user if device else None) or node.name
+            area = device.area_id if device and device.area_id else None
+            area = area or saved_areas.get(node.serial)
+            fields: dict[Any, Any] = {
+                probatio.Optional(FIELD_NAME, default=name): TextSelector(),
+                (
+                    probatio.Optional(FIELD_AREA, description={"suggested_value": area})
+                    if area
+                    else probatio.Optional(FIELD_AREA)
+                ): AreaSelector(),
+            }
+            if node.role is NodeRole.CHILD:
+                removed = included is not None and node.serial not in included
+                fields[probatio.Optional(FIELD_REMOVE, default=removed)] = (
+                    BooleanSelector()
+                )
+            cards[probatio.Required(labels[node.serial])] = section(
+                probatio.Schema(fields), {"collapsed": False}
+            )
+        return cards
+
     def _build_options(
-        self, user_input: dict[str, Any], labels: dict[str, str]
+        self,
+        user_input: dict[str, Any],
+        nodes: tuple[Node, ...],
+        labels: dict[str, str],
     ) -> dict[str, Any]:
         prior = self.config_entry.options
         refresh = user_input.get(SECTION_REFRESH, {})
-        mesh = user_input.get(SECTION_NODES, {})
         presence = user_input.get(SECTION_PRESENCE, {})
         options: dict[str, Any] = {
             OPT_FAST_INTERVAL: int(refresh[OPT_FAST_INTERVAL]),
@@ -399,25 +411,50 @@ class VelopOptionsFlow(OptionsFlowWithReload):
             OPT_CONSIDER_HOME: int(
                 presence.get(OPT_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)
             ),
-            OPT_AREAS: self._merge_areas(mesh, labels),
+            OPT_AREAS: self._merge_areas(user_input, labels),
         }
-        if OPT_INCLUDED_CHILDREN in mesh:
-            options[OPT_INCLUDED_CHILDREN] = list(mesh[OPT_INCLUDED_CHILDREN])
+        children = [n for n in nodes if n.role is NodeRole.CHILD]
+        if children:
+            options[OPT_INCLUDED_CHILDREN] = [
+                n.serial
+                for n in children
+                if not user_input.get(labels[n.serial], {}).get(FIELD_REMOVE, False)
+            ]
         elif OPT_INCLUDED_CHILDREN in prior:
             options[OPT_INCLUDED_CHILDREN] = prior[OPT_INCLUDED_CHILDREN]
         return options
 
     def _merge_areas(
-        self, mesh: dict[str, Any], labels: dict[str, str]
+        self, user_input: dict[str, Any], labels: dict[str, str]
     ) -> dict[str, str]:
         """Keep areas of nodes not shown in the form; update the shown ones."""
         areas = dict(self.config_entry.options.get(OPT_AREAS, {}))
         for serial, label in labels.items():
-            if area := mesh.get(label):
+            if area := user_input.get(label, {}).get(FIELD_AREA):
                 areas[serial] = area
             else:
                 areas.pop(serial, None)
         return areas
+
+    def _apply_names(
+        self,
+        user_input: dict[str, Any],
+        nodes: tuple[Node, ...],
+        labels: dict[str, str],
+    ) -> None:
+        """Store a changed node name as the device's user-chosen name."""
+        registry = dr.async_get(self.hass)
+        for node in nodes:
+            wanted = str(user_input.get(labels[node.serial], {}).get(FIELD_NAME, ""))
+            wanted = wanted.strip()
+            device = registry.async_get_device_by_identifier(
+                (DOMAIN, node.serial), self.config_entry.entry_id
+            )
+            if device is None:
+                continue
+            new = wanted if wanted and wanted != node.name else None
+            if new != device.name_by_user:
+                registry.async_update_device(device.id, name_by_user=new)
 
     def _apply_areas(self, new: dict[str, str], old: dict[str, str]) -> None:
         """Push explicit area changes to the device registry."""
