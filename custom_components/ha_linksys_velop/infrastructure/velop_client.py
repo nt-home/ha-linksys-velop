@@ -94,12 +94,14 @@ class VelopClient:
         """Fetch WAN status, nodes and clients in one transaction."""
         responses = await self._transport.async_transaction(
             [
-                JnapAction(ACTION_WAN_STATUS),
+                # The hub authenticates a transaction by its first action, and
+                # GetWANStatus is public: keep an authenticated action first.
                 JnapAction(ACTION_GET_DEVICES, {"sinceRevision": 0}),
                 JnapAction(ACTION_BACKHAUL),
+                JnapAction(ACTION_WAN_STATUS),
             ]
         )
-        wan_resp, devices_resp, backhaul_resp = responses
+        devices_resp, backhaul_resp, wan_resp = responses
         for response in responses:
             _raise_if_fatal(response)
         wan = _wan_or_unknown(wan_resp)

@@ -227,9 +227,9 @@ async def test_fast_router(session: aiohttp.ClientSession, emulator: Emulator) -
     assert snap.nodes[2].backhaul.connection_type == "wired"
     assert [n.client_count for n in snap.nodes] == [1, 2, 0]
     assert [c[0] for c in emulator.calls] == [
-        "router/GetWANStatus",
         "devicelist/GetDevices",
         "nodes/diagnostics/GetBackhaulInfo",
+        "router/GetWANStatus",
     ]
 
 

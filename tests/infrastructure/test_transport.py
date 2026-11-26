@@ -225,10 +225,20 @@ async def test_transaction_against_emulator(
 ) -> None:
     """The emulator answers a transaction in order."""
     res = await make(session, emulator).async_transaction(
-        [JnapAction(WAN), JnapAction(GET_DEVICES)]
+        [JnapAction(GET_DEVICES), JnapAction(WAN)]
     )
     assert all(r.ok for r in res)
-    assert res[0].output["wanStatus"] == "Connected"
+    assert res[1].output["wanStatus"] == "Connected"
+
+
+async def test_transaction_public_first_action_unauthenticates_rest(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """The hub authenticates a transaction by its first action (regression)."""
+    res = await make(session, emulator).async_transaction(
+        [JnapAction(WAN), JnapAction(GET_DEVICES)]
+    )
+    assert [r.result for r in res] == ["OK", "_ErrorUnauthorized"]
 
 
 async def test_wrapped_body_rejected(

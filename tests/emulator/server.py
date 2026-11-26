@@ -61,6 +61,11 @@ def client_device(
     }
 
 
+PUBLIC_ACTIONS = frozenset(
+    {"core/GetDeviceInfo", "nodes/smartmode/GetDeviceMode", "router/GetWANStatus"}
+)
+
+
 @dataclass
 class Emulator:
     """A scriptable router. Mutate attributes between refreshes."""
@@ -133,14 +138,7 @@ class Emulator:
         if action in self.unknown_actions:
             return {"result": "_ErrorUnknownAction"}
         name = action.removeprefix(BASE)
-        needs_auth = (
-            name
-            not in {
-                "core/GetDeviceInfo",
-                "nodes/smartmode/GetDeviceMode",
-            }
-            or self.require_auth_for_info
-        )
+        needs_auth = name not in PUBLIC_ACTIONS or self.require_auth_for_info
         if needs_auth and not authed:
             if self.locked:
                 return {"result": "ErrorAdminAccountLocked"}
@@ -212,7 +210,11 @@ class Emulator:
         if action == f"{BASE}core/Transaction":
             if not isinstance(body, list) and self.reject_wrapped_transaction:
                 return web.json_response({"result": "_ErrorInvalidInput"})
-            responses = [self._action(item["action"], authed) for item in body]
+            # Like the real hub, a transaction is authenticated by its first
+            # action: a public first action leaves the rest unauthenticated.
+            first = str(body[0]["action"]).removeprefix(BASE) if body else ""
+            effective = authed and first not in PUBLIC_ACTIONS
+            responses = [self._action(item["action"], effective) for item in body]
             top = "OK" if all(r["result"] == "OK" for r in responses) else "Error"
             return web.json_response({"result": top, "responses": responses})
         if self.drop_on_reboot and action.endswith("Reboot"):
