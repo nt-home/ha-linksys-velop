@@ -70,9 +70,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SECTION_REFRESH = "refresh"
 SECTION_NODES = "nodes"
-FIELD_NAME = "Name"
-FIELD_AREA = "Area"
-FIELD_REMOVE = "Remove node"
+MAX_NODE_SLOTS = 16
 SECTION_PRESENCE = "presence"
 
 _PASSWORD = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
@@ -120,9 +118,14 @@ def _error_key(exc: VelopError) -> str:
     return "unknown"
 
 
-def _field(label: str, field: str) -> str:
-    """Return the form key of one node field inside the Mesh nodes card."""
-    return f"{label}: {field}"
+def _area_key(slot: int) -> str:
+    """Form key of a node's area picker; translated as "Area" for every slot."""
+    return f"area_{slot}"
+
+
+def _remove_key(slot: int) -> str:
+    """Form key of a node's remove switch; translated as "Remove node"."""
+    return f"remove_{slot}"
 
 
 def _node_label(node: Node) -> str:
@@ -379,7 +382,7 @@ class VelopOptionsFlow(OptionsFlowWithReload):
         saved_areas = opts.get(OPT_AREAS, {})
         registry = dr.async_get(self.hass)
         fields: dict[Any, Any] = {}
-        for node in nodes:
+        for slot, node in enumerate(nodes, 1):
             label = labels[node.serial]
             device = registry.async_get_device_by_identifier(
                 (DOMAIN, node.serial), self.config_entry.entry_id
@@ -387,10 +390,10 @@ class VelopOptionsFlow(OptionsFlowWithReload):
             name = (device.name_by_user if device else None) or node.name
             area = device.area_id if device and device.area_id else None
             area = area or saved_areas.get(node.serial)
-            fields[probatio.Optional(_field(label, FIELD_NAME), default=name)] = (
-                TextSelector()
-            )
-            area_key = _field(label, FIELD_AREA)
+            # The node's own title labels its first input; the area picker and
+            # remove switch use the same translated labels under every node.
+            fields[probatio.Optional(label, default=name)] = TextSelector()
+            area_key = _area_key(slot)
             fields[
                 probatio.Optional(area_key, description={"suggested_value": area})
                 if area
@@ -398,9 +401,9 @@ class VelopOptionsFlow(OptionsFlowWithReload):
             ] = AreaSelector()
             if node.role is NodeRole.CHILD:
                 removed = included is not None and node.serial not in included
-                fields[
-                    probatio.Optional(_field(label, FIELD_REMOVE), default=removed)
-                ] = BooleanSelector()
+                fields[probatio.Optional(_remove_key(slot), default=removed)] = (
+                    BooleanSelector()
+                )
         return fields
 
     def _build_options(
@@ -421,29 +424,30 @@ class VelopOptionsFlow(OptionsFlowWithReload):
             OPT_CONSIDER_HOME: int(
                 presence.get(OPT_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)
             ),
-            OPT_AREAS: self._merge_areas(mesh, labels),
+            OPT_AREAS: self._merge_areas(mesh, nodes),
         }
         children = [n for n in nodes if n.role is NodeRole.CHILD]
         if children:
+            slots = {n.serial: i for i, n in enumerate(nodes, 1)}
             options[OPT_INCLUDED_CHILDREN] = [
                 n.serial
                 for n in children
-                if not mesh.get(_field(labels[n.serial], FIELD_REMOVE), False)
+                if not mesh.get(_remove_key(slots[n.serial]), False)
             ]
         elif OPT_INCLUDED_CHILDREN in prior:
             options[OPT_INCLUDED_CHILDREN] = prior[OPT_INCLUDED_CHILDREN]
         return options
 
     def _merge_areas(
-        self, mesh: dict[str, Any], labels: dict[str, str]
+        self, mesh: dict[str, Any], nodes: tuple[Node, ...]
     ) -> dict[str, str]:
         """Keep areas of nodes not shown in the form; update the shown ones."""
         areas = dict(self.config_entry.options.get(OPT_AREAS, {}))
-        for serial, label in labels.items():
-            if area := mesh.get(_field(label, FIELD_AREA)):
-                areas[serial] = area
+        for slot, node in enumerate(nodes, 1):
+            if area := mesh.get(_area_key(slot)):
+                areas[node.serial] = area
             else:
-                areas.pop(serial, None)
+                areas.pop(node.serial, None)
         return areas
 
     def _apply_names(
@@ -456,7 +460,7 @@ class VelopOptionsFlow(OptionsFlowWithReload):
         registry = dr.async_get(self.hass)
         mesh = user_input.get(SECTION_NODES, {})
         for node in nodes:
-            wanted = str(mesh.get(_field(labels[node.serial], FIELD_NAME), "")).strip()
+            wanted = str(mesh.get(labels[node.serial], "")).strip()
             device = registry.async_get_device_by_identifier(
                 (DOMAIN, node.serial), self.config_entry.entry_id
             )

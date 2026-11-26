@@ -529,9 +529,15 @@ async def test_reauth_wrong_hub(
 # --------------------------------------------------------------------------
 
 
+LABELS = {1: LABEL_1, 2: LABEL_2, 3: LABEL_3}
+
+
 def _k(label: str, field: str) -> str:
-    """Form key of a node field inside the Mesh nodes card."""
-    return f"{label}: {field}"
+    """Form key of a node field: the node label, or its numbered Area/Remove key."""
+    slot = next(i for i, name in LABELS.items() if name == label)
+    return {"Name": label, "Area": f"area_{slot}", "Remove node": f"remove_{slot}"}[
+        field
+    ]
 
 
 def _cards(form: Any) -> dict[str, dict[str, Any]]:
@@ -565,15 +571,18 @@ async def test_options_flow_full(
     assert set(cards["refresh"]) == {OPT_FAST_INTERVAL, OPT_SLOW_INTERVAL}
     # The primary node has no remove switch; child nodes do, default off.
     mesh = cards["nodes"]
-    assert {k for k in mesh if k.startswith(LABEL_1)} == {
-        _k(LABEL_1, "Name"),
-        _k(LABEL_1, "Area"),
-    }
-    assert {k for k in mesh if k.startswith(LABEL_2)} == {
-        _k(LABEL_2, "Name"),
-        _k(LABEL_2, "Area"),
-        _k(LABEL_2, "Remove node"),
-    }
+    # Each node: its title as the first input's label, then area and (for
+    # child nodes only) the remove switch.
+    assert list(mesh) == [
+        LABEL_1,
+        "area_1",
+        LABEL_2,
+        "area_2",
+        "remove_2",
+        LABEL_3,
+        "area_3",
+        "remove_3",
+    ]
     assert mesh[_k(LABEL_2, "Remove node")].default() is False
     assert mesh[_k(LABEL_2, "Name")].default() == "Bedroom"
     assert set(cards["presence"]) == {
@@ -735,3 +744,17 @@ def test_node_device_helper_used() -> None:
     assert (
         node_device("n", "SER1234", "Slave", "X")["unit"]["serialNumber"] == "SER1234"
     )
+
+
+def test_node_field_labels_are_translated() -> None:
+    """Every numbered Area and Remove node key has a label in the translations."""
+    import json
+    from pathlib import Path
+
+    root = Path(config_flow.__file__).parent
+    for name in ("strings.json", "translations/en.json"):
+        data = json.loads((root / name).read_text())
+        labels = data["options"]["step"]["init"]["sections"]["nodes"]["data"]
+        for slot in range(1, config_flow.MAX_NODE_SLOTS + 1):
+            assert labels[f"area_{slot}"] == "Area"
+            assert labels[f"remove_{slot}"] == "Remove node"
