@@ -547,21 +547,17 @@ async def test_options_flow_full(
     form = await hass.config_entries.options.async_init(mock_entry.entry_id)
     assert form["type"] is FlowResultType.FORM
     assert form["step_id"] == "init"
-    schema = form["data_schema"].schema
-    keys = {str(k): k for k in schema}
-    assert {
-        OPT_FAST_INTERVAL,
-        OPT_SLOW_INTERVAL,
-        OPT_INCLUDED_CHILDREN,
-        LABEL_1,
-        LABEL_2,
-        LABEL_3,
-        OPT_TRACK_ALL,
-        OPT_TRACKED_CLIENTS,
-        OPT_CONSIDER_HOME,
-    } <= set(keys)
-    assert keys[OPT_INCLUDED_CHILDREN].default() == [CHILD_2, CHILD_3]
-    client_opts = schema[keys[OPT_TRACKED_CLIENTS]].config["options"]
+    top = form["data_schema"].schema
+    assert [str(k) for k in top] == ["refresh", "nodes", "presence"]
+    sections = {str(k): v.schema.schema for k, v in top.items()}
+    refresh = {str(k) for k in sections["refresh"]}
+    assert refresh == {OPT_FAST_INTERVAL, OPT_SLOW_INTERVAL}
+    mesh = {str(k): k for k in sections["nodes"]}
+    assert set(mesh) == {OPT_INCLUDED_CHILDREN, LABEL_1, LABEL_2, LABEL_3}
+    assert mesh[OPT_INCLUDED_CHILDREN].default() == [CHILD_2, CHILD_3]
+    presence = {str(k): k for k in sections["presence"]}
+    assert set(presence) == {OPT_TRACK_ALL, OPT_TRACKED_CLIENTS, OPT_CONSIDER_HOME}
+    client_opts = sections["presence"][presence[OPT_TRACKED_CLIENTS]].config["options"]
     assert {o["value"] for o in client_opts} == {
         "aa:bb:cc:00:00:01",
         "aa:bb:cc:00:00:02",
@@ -571,14 +567,17 @@ async def test_options_flow_full(
     result = await hass.config_entries.options.async_configure(
         form["flow_id"],
         {
-            OPT_FAST_INTERVAL: 30,
-            OPT_SLOW_INTERVAL: 20,
-            OPT_INCLUDED_CHILDREN: [CHILD_3],
-            LABEL_2: den.id,
-            LABEL_3: cellar.id,
-            OPT_TRACK_ALL: False,
-            OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
-            OPT_CONSIDER_HOME: 120,
+            "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
+            "nodes": {
+                OPT_INCLUDED_CHILDREN: [CHILD_3],
+                LABEL_2: den.id,
+                LABEL_3: cellar.id,
+            },
+            "presence": {
+                OPT_TRACK_ALL: False,
+                OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
+                OPT_CONSIDER_HOME: 120,
+            },
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -602,9 +601,12 @@ async def test_options_flow_full(
     # Second pass: unchanged areas are skipped, saved area is a suggestion,
     # track_all and a missing device are tolerated.
     form = await hass.config_entries.options.async_init(mock_entry.entry_id)
+    nodes_section = next(
+        v for k, v in form["data_schema"].schema.items() if str(k) == "nodes"
+    )
     suggested = {
         str(k): (k.description or {}).get("suggested_value")
-        for k in form["data_schema"].schema
+        for k in nodes_section.schema.schema
     }
     # Bedroom is now excluded from the snapshot, so only Office is offered.
     assert LABEL_2 not in suggested
@@ -612,12 +614,9 @@ async def test_options_flow_full(
     result = await hass.config_entries.options.async_configure(
         form["flow_id"],
         {
-            OPT_FAST_INTERVAL: 30,
-            OPT_SLOW_INTERVAL: 20,
-            OPT_INCLUDED_CHILDREN: [CHILD_3],
-            LABEL_3: cellar.id,
-            OPT_TRACK_ALL: True,
-            OPT_CONSIDER_HOME: 60,
+            "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
+            "nodes": {OPT_INCLUDED_CHILDREN: [CHILD_3], LABEL_3: cellar.id},
+            "presence": {OPT_TRACK_ALL: True, OPT_CONSIDER_HOME: 60},
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -642,7 +641,11 @@ async def test_options_flow_area_for_unknown_device(
     form = await hass.config_entries.options.async_init(mock_entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         form["flow_id"],
-        {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20, LABEL_2: area.id},
+        {
+            "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
+            "nodes": {LABEL_2: area.id},
+            "presence": {},
+        },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert mock_entry.options[OPT_AREAS] == {CHILD_2: area.id}
@@ -662,11 +665,19 @@ async def test_options_flow_without_runtime_data(
     )
     entry.add_to_hass(hass)
     form = await hass.config_entries.options.async_init(entry.entry_id)
-    keys = {str(k) for k in form["data_schema"].schema}
-    assert OPT_INCLUDED_CHILDREN not in keys
-    assert OPT_TRACKED_CLIENTS not in keys
+    inner = {
+        str(k): {str(i) for i in v.schema.schema}
+        for k, v in form["data_schema"].schema.items()
+    }
+    assert OPT_INCLUDED_CHILDREN not in inner["nodes"]
+    assert OPT_TRACKED_CLIENTS not in inner["presence"]
     result = await hass.config_entries.options.async_configure(
-        form["flow_id"], {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20}
+        form["flow_id"],
+        {
+            "refresh": {OPT_FAST_INTERVAL: 30, OPT_SLOW_INTERVAL: 20},
+            "nodes": {},
+            "presence": {},
+        },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     if prior:

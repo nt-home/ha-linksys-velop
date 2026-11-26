@@ -66,21 +66,43 @@
     "step": {
       "init": {
         "title": "Velop options",
-        "data": {
-          "fast_interval": "Refresh interval (seconds)",
-          "slow_interval": "Firmware and statistics interval (minutes)",
-          "included_children": "Child nodes to include",
-          "track_all_clients": "Track all clients",
-          "tracked_clients": "Tracked clients",
-          "consider_home": "Consider home (seconds)"
-        },
-        "data_description": {
-          "fast_interval": "How often status and nodes are refreshed (15-600).",
-          "slow_interval": "How often firmware status is checked (5-1440).",
-          "included_children": "Unselected child nodes are removed from Home Assistant.",
-          "track_all_clients": "Create a presence tracker (disabled by default) for every client. Client names and addresses then appear in Home Assistant.",
-          "tracked_clients": "Clients that get an enabled presence tracker.",
-          "consider_home": "How long a client stays home after it disconnects."
+        "sections": {
+          "refresh": {
+            "name": "Refresh",
+            "description": "How often Home Assistant asks your hub for new data.",
+            "data": {
+              "fast_interval": "Status refresh (seconds)",
+              "slow_interval": "Firmware and statistics refresh (minutes)"
+            },
+            "data_description": {
+              "fast_interval": "Status, mesh nodes and backhaul (15-600).",
+              "slow_interval": "Firmware status and CPU and memory load (5-1440)."
+            }
+          },
+          "nodes": {
+            "name": "Mesh nodes",
+            "description": "Choose the child nodes to keep and give each node an area. Unselected child nodes are removed from Home Assistant.",
+            "data": {
+              "included_children": "Child nodes to include"
+            },
+            "data_description": {
+              "included_children": "The primary node is always included."
+            }
+          },
+          "presence": {
+            "name": "Presence tracking",
+            "description": "Optional device trackers for clients on your network (router mode only). Client names and addresses then appear in Home Assistant.",
+            "data": {
+              "track_all_clients": "Track all clients",
+              "tracked_clients": "Tracked clients",
+              "consider_home": "Consider home (seconds)"
+            },
+            "data_description": {
+              "track_all_clients": "Create a presence tracker (disabled by default) for every client.",
+              "tracked_clients": "Clients that get an enabled presence tracker.",
+              "consider_home": "How long a client stays home after it disconnects."
+            }
+          }
         }
       }
     }

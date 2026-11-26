@@ -14,6 +14,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.selector import (
     AreaSelector,
@@ -66,6 +67,10 @@ if TYPE_CHECKING:
     from .coordinator import VelopConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+SECTION_REFRESH = "refresh"
+SECTION_NODES = "nodes"
+SECTION_PRESENCE = "presence"
 
 _PASSWORD = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 _PORT = NumberSelector(
@@ -271,7 +276,7 @@ class VelopOptionsFlow(OptionsFlowWithReload):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit options."""
+        """Edit options, grouped into refresh, mesh nodes and presence."""
         entry = self.config_entry
         snapshot = entry.runtime_data.data if hasattr(entry, "runtime_data") else None
         nodes = snapshot.nodes if snapshot else ()
@@ -284,7 +289,7 @@ class VelopOptionsFlow(OptionsFlowWithReload):
             return self.async_create_entry(data=options)
 
         opts = entry.options
-        schema: dict[Any, Any] = {
+        refresh = {
             probatio.Required(
                 OPT_FAST_INTERVAL,
                 default=opts.get(OPT_FAST_INTERVAL, DEFAULT_FAST_INTERVAL),
@@ -310,9 +315,10 @@ class VelopOptionsFlow(OptionsFlowWithReload):
                 )
             ),
         }
+        mesh: dict[Any, Any] = {}
         if children:
             current = opts.get(OPT_INCLUDED_CHILDREN, [n.serial for n in children])
-            schema[probatio.Optional(OPT_INCLUDED_CHILDREN, default=current)] = (
+            mesh[probatio.Optional(OPT_INCLUDED_CHILDREN, default=current)] = (
                 SelectSelector(
                     SelectSelectorConfig(
                         options=[
@@ -332,12 +338,14 @@ class VelopOptionsFlow(OptionsFlowWithReload):
                 if serial in saved_areas
                 else probatio.Optional(label)
             )
-            schema[key] = AreaSelector()
-        schema[
-            probatio.Optional(OPT_TRACK_ALL, default=opts.get(OPT_TRACK_ALL, False))
-        ] = BooleanSelector()
+            mesh[key] = AreaSelector()
+        presence: dict[Any, Any] = {
+            probatio.Optional(
+                OPT_TRACK_ALL, default=opts.get(OPT_TRACK_ALL, False)
+            ): BooleanSelector()
+        }
         if clients:
-            schema[
+            presence[
                 probatio.Optional(
                     OPT_TRACKED_CLIENTS, default=opts.get(OPT_TRACKED_CLIENTS, [])
                 )
@@ -349,7 +357,7 @@ class VelopOptionsFlow(OptionsFlowWithReload):
                     multiple=True,
                 )
             )
-        schema[
+        presence[
             probatio.Optional(
                 OPT_CONSIDER_HOME,
                 default=opts.get(OPT_CONSIDER_HOME, DEFAULT_CONSIDER_HOME),
@@ -363,35 +371,49 @@ class VelopOptionsFlow(OptionsFlowWithReload):
                 mode=NumberSelectorMode.BOX,
             )
         )
+        schema: dict[Any, Any] = {
+            probatio.Required(SECTION_REFRESH): section(
+                probatio.Schema(refresh), {"collapsed": False}
+            ),
+            probatio.Required(SECTION_NODES): section(
+                probatio.Schema(mesh), {"collapsed": False}
+            ),
+            probatio.Required(SECTION_PRESENCE): section(
+                probatio.Schema(presence), {"collapsed": True}
+            ),
+        }
         return self.async_show_form(step_id="init", data_schema=probatio.Schema(schema))
 
     def _build_options(
         self, user_input: dict[str, Any], labels: dict[str, str]
     ) -> dict[str, Any]:
         prior = self.config_entry.options
+        refresh = user_input.get(SECTION_REFRESH, {})
+        mesh = user_input.get(SECTION_NODES, {})
+        presence = user_input.get(SECTION_PRESENCE, {})
         options: dict[str, Any] = {
-            OPT_FAST_INTERVAL: int(user_input[OPT_FAST_INTERVAL]),
-            OPT_SLOW_INTERVAL: int(user_input[OPT_SLOW_INTERVAL]),
-            OPT_TRACK_ALL: user_input.get(OPT_TRACK_ALL, False),
-            OPT_TRACKED_CLIENTS: list(user_input.get(OPT_TRACKED_CLIENTS, [])),
+            OPT_FAST_INTERVAL: int(refresh[OPT_FAST_INTERVAL]),
+            OPT_SLOW_INTERVAL: int(refresh[OPT_SLOW_INTERVAL]),
+            OPT_TRACK_ALL: presence.get(OPT_TRACK_ALL, False),
+            OPT_TRACKED_CLIENTS: list(presence.get(OPT_TRACKED_CLIENTS, [])),
             OPT_CONSIDER_HOME: int(
-                user_input.get(OPT_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)
+                presence.get(OPT_CONSIDER_HOME, DEFAULT_CONSIDER_HOME)
             ),
-            OPT_AREAS: self._merge_areas(user_input, labels),
+            OPT_AREAS: self._merge_areas(mesh, labels),
         }
-        if OPT_INCLUDED_CHILDREN in user_input:
-            options[OPT_INCLUDED_CHILDREN] = list(user_input[OPT_INCLUDED_CHILDREN])
+        if OPT_INCLUDED_CHILDREN in mesh:
+            options[OPT_INCLUDED_CHILDREN] = list(mesh[OPT_INCLUDED_CHILDREN])
         elif OPT_INCLUDED_CHILDREN in prior:
             options[OPT_INCLUDED_CHILDREN] = prior[OPT_INCLUDED_CHILDREN]
         return options
 
     def _merge_areas(
-        self, user_input: dict[str, Any], labels: dict[str, str]
+        self, mesh: dict[str, Any], labels: dict[str, str]
     ) -> dict[str, str]:
         """Keep areas of nodes not shown in the form; update the shown ones."""
         areas = dict(self.config_entry.options.get(OPT_AREAS, {}))
         for serial, label in labels.items():
-            if area := user_input.get(label):
+            if area := mesh.get(label):
                 areas[serial] = area
             else:
                 areas.pop(serial, None)

@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_ROLE_LABEL = {NodeRole.PRIMARY: "primary node", NodeRole.CHILD: "child node"}
+
 type VelopConfigEntry = ConfigEntry[VelopCoordinator]
 
 
@@ -204,7 +206,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
                 identifiers=identifiers,
                 connections={("mac", node.mac)} if node.mac else None,
                 manufacturer=MANUFACTURER,
-                model=node.model,
+                model=f"{node.model} ({_ROLE_LABEL[node.role]})",
                 name=node.name,
                 serial_number=node.serial,
                 sw_version=node.firmware,

@@ -30,6 +30,9 @@ async def test_setup_and_unload(
     )
     assert hub is not None and child is not None
     assert child.via_device_id == hub.id
+    # The role shows under the device name, e.g. in the Name and assign dialog.
+    assert hub.model == "MX2000 (primary node)"
+    assert child.model == "MX2000 (child node)"
 
     ents = er.async_entries_for_config_entry(er.async_get(hass), mock_entry.entry_id)
     assert len(ents) > 10
