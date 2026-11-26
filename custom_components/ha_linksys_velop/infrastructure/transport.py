@@ -208,12 +208,17 @@ def _parse_transaction(data: object, expected: int) -> list[JnapResponse]:
     if not isinstance(data, dict):
         raise UnsupportedDeviceError
     result = _result_of(data)
-    if result != RESULT_OK:
-        raise_for_result(result)
     raw = data.get("responses")
     if raw is None and isinstance(data.get("output"), dict):
         raw = data["output"].get("responses")
-    if not isinstance(raw, list) or len(raw) != expected:
+    if not isinstance(raw, list):
+        # No per-action results: the top-level code is the only signal.
+        raise_for_result(result)
+        raise UnsupportedDeviceError
+    # The hub sets a generic top-level "Error" whenever any single action
+    # fails, so the per-action results are authoritative.
+    if len(raw) != expected:
+        raise_for_result(result)
         raise UnsupportedDeviceError
     responses: list[JnapResponse] = []
     for item in raw:

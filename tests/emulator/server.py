@@ -213,7 +213,8 @@ class Emulator:
             if not isinstance(body, list) and self.reject_wrapped_transaction:
                 return web.json_response({"result": "_ErrorInvalidInput"})
             responses = [self._action(item["action"], authed) for item in body]
-            return web.json_response({"result": "OK", "responses": responses})
+            top = "OK" if all(r["result"] == "OK" for r in responses) else "Error"
+            return web.json_response({"result": top, "responses": responses})
         if self.drop_on_reboot and action.endswith("Reboot"):
             self.reboots.append({"action": "dropped"})
             assert request.transport is not None

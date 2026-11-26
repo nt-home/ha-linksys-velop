@@ -313,6 +313,35 @@ async def test_transaction_non_ok_top_level_maps(
         await make(session, emulator).async_transaction([JnapAction(WAN)])
 
 
+async def test_transaction_generic_top_level_error_keeps_responses(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """The hub's generic top-level Error does not hide per-action results."""
+    raw(
+        emulator,
+        {
+            "result": "Error",
+            "responses": [
+                {"result": "OK", "output": {"a": 1}},
+                {"result": "_ErrorUnknownAction"},
+            ],
+        },
+    )
+    res = await make(session, emulator).async_transaction(
+        [JnapAction(WAN), JnapAction(WAN)]
+    )
+    assert [r.result for r in res] == ["OK", "_ErrorUnknownAction"]
+
+
+async def test_transaction_top_level_error_without_responses(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """A top-level Error with no responses raises the mapped error."""
+    raw(emulator, {"result": "Error"})
+    with pytest.raises(JnapResultError):
+        await make(session, emulator).async_transaction([JnapAction(WAN)])
+
+
 @pytest.mark.parametrize("payload", [[1], "x", 5, None, {"output": {}}, {"result": 1}])
 async def test_call_malformed(
     session: aiohttp.ClientSession, emulator: Emulator, payload: object
