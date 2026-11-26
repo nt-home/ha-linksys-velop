@@ -41,7 +41,6 @@ _LOGGER = logging.getLogger(__name__)
 
 ACTION_DEVICE_INFO = f"{JNAP_BASE}core/GetDeviceInfo"
 ACTION_DEVICE_MODE = f"{JNAP_BASE}nodes/smartmode/GetDeviceMode"
-ACTION_CHECK_PASSWORD = f"{JNAP_BASE}core/CheckAdminPassword"
 ACTION_GET_DEVICES = f"{JNAP_BASE}devicelist/GetDevices"
 ACTION_WAN_STATUS = f"{JNAP_BASE}router/GetWANStatus"
 ACTION_BACKHAUL = f"{JNAP_BASE}nodes/diagnostics/GetBackhaulInfo"
@@ -80,14 +79,12 @@ class VelopClient:
         return identity
 
     async def async_validate_credentials(self) -> None:
-        """Check the admin credentials with an authenticated action."""
-        try:
-            output = await self._transport.async_call(ACTION_CHECK_PASSWORD, {})
-        except UnknownActionError:
-            await self._transport.async_call(ACTION_GET_DEVICES, {"sinceRevision": 0})
-            return
-        if output.get("isPasswordValid") is False:
-            raise InvalidAuthError
+        """Check the admin credentials with an authenticated action.
+
+        GetDevices needs the admin password and no other input, unlike
+        CheckAdminPassword which expects the password inside its request.
+        """
+        await self._transport.async_call(ACTION_GET_DEVICES, {"sinceRevision": 0})
 
     async def async_fetch_fast(self, identity: HubIdentity) -> FastSnapshot:
         """Fetch WAN status, nodes and clients in one transaction."""

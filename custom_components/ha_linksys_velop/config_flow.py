@@ -108,6 +108,7 @@ def _error_key(exc: VelopError) -> str:
         return "not_primary_node"
     if isinstance(exc, InvalidHostError):
         return "invalid_host"
+    _LOGGER.warning("Hub setup failed with an unmapped error: %r", exc)
     return "unknown"
 
 

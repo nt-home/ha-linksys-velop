@@ -179,7 +179,7 @@ async def test_identity_info_errors_propagate() -> None:
 async def test_validate_ok(session: aiohttp.ClientSession, emulator: Emulator) -> None:
     """Valid credentials pass."""
     await client_for(session, emulator).async_validate_credentials()
-    assert emulator.calls == [("core/CheckAdminPassword", True)]
+    assert emulator.calls == [("devicelist/GetDevices", True)]
 
 
 async def test_validate_wrong_password(
@@ -194,47 +194,16 @@ async def test_validate_wrong_password(
         await client.async_validate_credentials()
 
 
-async def test_validate_fallback_when_check_unknown(
-    session: aiohttp.ClientSession, emulator: Emulator
-) -> None:
-    """Falls back to GetDevices when CheckAdminPassword is unknown."""
-    emulator.unknown_actions.add(f"{JNAP_BASE}core/CheckAdminPassword")
-    await client_for(session, emulator).async_validate_credentials()
-    assert emulator.calls[-1] == ("devicelist/GetDevices", True)
-    with pytest.raises(InvalidAuthError):
-        await client_for(session, emulator, "bad-password").async_validate_credentials()
-
-
-async def test_validate_fallback_when_check_unknown_fake() -> None:
-    """The fallback sends sinceRevision 0."""
-    client, transport = fake(
-        {
-            "core/CheckAdminPassword": UnknownActionError("_ErrorUnknownAction"),
-            "devicelist/GetDevices": {},
-        }
-    )
+async def test_validate_sends_since_revision() -> None:
+    """Validation is an authenticated GetDevices with sinceRevision 0."""
+    client, transport = fake({"devicelist/GetDevices": {}})
     await client.async_validate_credentials()
     assert transport.log[-1] == ("devicelist/GetDevices", {"sinceRevision": 0}, None)
 
 
-async def test_validate_password_flag_false() -> None:
-    """isPasswordValid false raises InvalidAuthError; true or absent passes."""
-    client, _ = fake({"core/CheckAdminPassword": {"isPasswordValid": False}})
-    with pytest.raises(InvalidAuthError):
-        await client.async_validate_credentials()
-    for out in ({"isPasswordValid": True}, {}, {"isPasswordValid": "no"}):
-        client, _ = fake({"core/CheckAdminPassword": out})
-        await client.async_validate_credentials()
-
-
-async def test_validate_fallback_then_other_error() -> None:
-    """Errors in the fallback call propagate."""
-    client, _ = fake(
-        {
-            "core/CheckAdminPassword": UnknownActionError("x"),
-            "devicelist/GetDevices": CannotConnectError(),
-        }
-    )
+async def test_validate_error_propagates() -> None:
+    """Transport errors during validation propagate."""
+    client, _ = fake({"devicelist/GetDevices": CannotConnectError()})
     with pytest.raises(CannotConnectError):
         await client.async_validate_credentials()
 
