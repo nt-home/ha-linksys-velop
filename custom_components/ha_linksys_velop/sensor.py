@@ -119,7 +119,6 @@ NODE_SENSORS: tuple[VelopSensorDescription, ...] = (
         translation_key="client_count",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda n, _s: n.client_count,
-        exists_fn=lambda _n, s: s.mode is NetworkMode.ROUTER,
     ),
     VelopSensorDescription(
         key="ip_address",

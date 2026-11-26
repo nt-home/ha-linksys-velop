@@ -76,6 +76,7 @@ class Emulator:
     devices: list[dict[str, Any]] = field(default_factory=list)
     backhaul: list[dict[str, Any]] = field(default_factory=list)
     firmware: list[dict[str, Any]] = field(default_factory=list)
+    wireless: list[dict[str, Any]] = field(default_factory=list)
     locked: bool = False
     mode: str = "master"
     unknown_actions: set[str] = field(default_factory=set)
@@ -182,6 +183,11 @@ class Emulator:
 
     def _a_nodes_diagnostics_GetBackhaulInfo(self) -> dict[str, Any]:
         return {"result": "OK", "output": {"backhaulDevices": self.backhaul}}
+
+    def _a_nodes_networkconnections_GetNodesWirelessNetworkConnections(
+        self,
+    ) -> dict[str, Any]:
+        return {"result": "OK", "output": {"nodeWirelessConnections": self.wireless}}
 
     def _a_nodes_firmwareupdate_GetFirmwareUpdateStatus(self) -> dict[str, Any]:
         return {"result": "OK", "output": {"firmwareUpdateStatus": self.firmware}}

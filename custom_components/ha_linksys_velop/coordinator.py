@@ -25,6 +25,7 @@ from .const import (
     MANUFACTURER,
     MAX_BACKOFF_SECONDS,
     OPT_AREAS,
+    OPT_CLIENT_EVENTS,
     OPT_FAST_INTERVAL,
     OPT_INCLUDED_CHILDREN,
     OPT_SLOW_INTERVAL,
@@ -82,7 +83,9 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         self._slow_at: float | None = None
         self.all_nodes: tuple[Node, ...] = ()
         self._failures = 0
-        self._detector = EventDetector()
+        self._detector = EventDetector(
+            track_clients=bool(entry.options.get(OPT_CLIENT_EVENTS, False))
+        )
         self._event_listeners: list[Callable[[VelopEvent], None]] = []
         self._reboot_at: dict[str, float] = {}
         self._mode_reload = False
@@ -234,12 +237,23 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             payload["node_serial"] = event.node_serial
         if event.detail:
             payload["detail"] = event.detail
-        registry = dr.async_get(self.hass)
-        hub = registry.async_get_device_by_identifier(
-            (DOMAIN, self.identity.serial), self.config_entry.entry_id
+        if event.client_name:
+            payload["client_name"] = event.client_name
+        if event.client_mac:
+            payload["client_mac"] = event.client_mac
+        # Client events belong to the node the client attached to or left.
+        owner = (
+            event.node_serial
+            if event.type in (EventType.CLIENT_JOINED, EventType.CLIENT_LEFT)
+            and event.node_serial
+            else self.identity.serial
         )
-        if hub is not None:
-            payload["device_id"] = hub.id
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device_by_identifier(
+            (DOMAIN, owner), self.config_entry.entry_id
+        )
+        if device is not None:
+            payload["device_id"] = device.id
         self.hass.bus.async_fire(EVENT_BUS_NAME, payload)
         for listener in list(self._event_listeners):
             listener(event)

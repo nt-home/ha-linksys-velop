@@ -171,12 +171,37 @@ def map_devices(
             client_devices.append(device)
     counts: dict[str, int] = {}
     for device in client_devices:
-        for conn in _connections(device):
-            if parent := _str(conn.get("parentDeviceID")):
-                counts[parent] = counts.get(parent, 0) + 1
+        # Same rule as _map_clients: a client belongs to its first connection.
+        conns = _connections(device)
+        if conns and (parent := _str(conns[0].get("parentDeviceID"))):
+            counts[parent] = counts.get(parent, 0) + 1
     nodes = [_with_count(n, counts) for n in nodes]
     clients = _map_clients(client_devices) if include_clients else ()
     return tuple(nodes), clients
+
+
+def map_wireless_counts(output: Mapping[str, Any]) -> dict[str, int]:
+    """Map GetNodesWirelessNetworkConnections to wireless clients per node.
+
+    Bridge mode gives clients no parent node, but this action lists the Wi-Fi
+    clients each node serves. Wired clients are not part of it.
+    """
+    counts: dict[str, int] = {}
+    for item in _dicts(output.get("nodeWirelessConnections")):
+        device_id = _str(item.get("deviceID"))
+        if device_id is not None:
+            counts[device_id] = len(_dicts(item.get("connections")))
+    return counts
+
+
+def with_client_counts(
+    nodes: tuple[Node, ...], counts: Mapping[str, int] | None
+) -> tuple[Node, ...]:
+    """Replace each node's client count; None leaves them unknown."""
+    return tuple(
+        replace(n, client_count=None if counts is None else counts.get(n.device_id, 0))
+        for n in nodes
+    )
 
 
 def _is_node(device: Mapping[str, Any]) -> bool:

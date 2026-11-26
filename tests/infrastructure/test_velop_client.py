@@ -240,6 +240,43 @@ async def test_fast_bridge(session: aiohttp.ClientSession, emulator: Emulator) -
     assert snap.wan.mode is NetworkMode.BRIDGE
     assert snap.clients == ()
     assert len(snap.nodes) == 3
+    # The emulator reports no Wi-Fi clients, so every node counts zero.
+    assert [n.client_count for n in snap.nodes] == [0, 0, 0]
+
+
+async def test_fast_bridge_counts_wireless_clients_per_node(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """Bridge mode counts each node's Wi-Fi clients from its own action."""
+    emulator.wan_type = "Bridge"
+    emulator.wireless = [
+        {"deviceID": "node-2", "connections": [{"macAddress": "x"}, {}]},
+        {"deviceID": "node-3", "connections": "junk"},
+        {"connections": [{}]},
+    ]
+    snap = await client_for(session, emulator).async_fetch_fast(IDENTITY)
+    by_id = {n.device_id: n.client_count for n in snap.nodes}
+    assert by_id == {"node-1": 0, "node-2": 2, "node-3": 0}
+
+
+async def test_fast_bridge_counts_unknown_when_action_missing(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """If the router lacks the action the per-node counts stay unknown."""
+    emulator.wan_type = "Bridge"
+    emulator.unknown_actions.add(
+        f"{JNAP_BASE}nodes/networkconnections/GetNodesWirelessNetworkConnections"
+    )
+    snap = await client_for(session, emulator).async_fetch_fast(IDENTITY)
+    assert [n.client_count for n in snap.nodes] == [None, None, None]
+
+
+async def test_router_mode_does_not_call_wireless_action(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """Router mode keeps its device-list counts and skips the extra request."""
+    await client_for(session, emulator).async_fetch_fast(IDENTITY)
+    assert not any("GetNodesWirelessNetworkConnections" in c[0] for c in emulator.calls)
 
 
 async def test_fast_tolerates_unknown_actions(

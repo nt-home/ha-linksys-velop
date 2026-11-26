@@ -20,6 +20,7 @@ from .const import (
     CONFIG_ENTRY_MINOR_VERSION,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
+    OPT_CLIENT_EVENTS,
     PLATFORMS,
     ROUTER_ONLY_KEYS,
 )
@@ -111,6 +112,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VelopConfigEntry) -> boo
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     if coordinator.data.mode is NetworkMode.BRIDGE:
         _prune_router_only_entities(hass, entry)
+    elif not entry.options.get(OPT_CLIENT_EVENTS, False):
+        _prune_client_event_entities(hass, entry)
     _LOGGER.debug("Hub set up in %s mode", coordinator.data.mode.value)
     return True
 
@@ -121,6 +124,14 @@ def _prune_router_only_entities(hass: HomeAssistant, entry: VelopConfigEntry) ->
     for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
         key = entity.unique_id.partition("_")[2]
         if key in ROUTER_ONLY_KEYS or entity.domain == "device_tracker":
+            registry.async_remove(entity.entity_id)
+
+
+def _prune_client_event_entities(hass: HomeAssistant, entry: VelopConfigEntry) -> None:
+    """Remove per-node client event entities once the option is switched off."""
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if entity.unique_id.partition("_")[2] == "client_events":
             registry.async_remove(entity.entity_id)
 
 

@@ -6,13 +6,16 @@ from types import MappingProxyType
 
 from custom_components.ha_linksys_velop.application.events import (
     ABSENT_LIMIT,
+    CLIENT_EVENT_TYPES,
     EVENT_TYPES,
+    HUB_EVENT_TYPES,
     EventDetector,
     EventType,
     VelopEvent,
     _Debounced,
 )
 from custom_components.ha_linksys_velop.domain.models import (
+    Client,
     FirmwareStatus,
     HubIdentity,
     HubSnapshot,
@@ -42,13 +45,14 @@ def snap(
     connected: bool | None = True,
     mode: NetworkMode = NetworkMode.ROUTER,
     firmware: dict[str, str] | None = None,
+    clients: tuple[Client, ...] = (),
 ) -> HubSnapshot:
     """Build a snapshot; firmware maps device id to available version."""
     return HubSnapshot(
         identity=HubIdentity("S", "M", "1"),
         wan=WanStatus(connected, None, None, None, mode),
         nodes=nodes,
-        clients=(),
+        clients=clients,
         firmware=MappingProxyType(
             {k: FirmwareStatus(v) for k, v in (firmware or {}).items()}
         ),
@@ -270,3 +274,125 @@ def test_custom_debounce() -> None:
     det = EventDetector(debounce=1)
     feed(det, snap(connected=True))
     assert types(feed(det, snap(connected=False))) == [EventType.WAN_DISCONNECTED]
+
+
+def client(mac: str, on: str | None, name: str | None = None) -> Client:
+    """Build a client attached to node serial ``on`` (None means offline)."""
+    return Client(
+        mac=mac,
+        name=name or mac,
+        connected=on is not None,
+        node_device_id=f"id-{on}" if on else None,
+    )
+
+
+def client_snap(
+    *clients: Client, mode: NetworkMode = NetworkMode.ROUTER
+) -> HubSnapshot:
+    """Snapshot with nodes A and B and the given clients."""
+    return snap((node("A"), node("B")), clients=clients, mode=mode)
+
+
+def tracking() -> EventDetector:
+    """Detector with client events switched on."""
+    return EventDetector(track_clients=True)
+
+
+def test_client_event_types_split() -> None:
+    """Client events are kept out of the hub event list."""
+    assert "client_joined" in EVENT_TYPES and "client_left" in EVENT_TYPES
+    assert "client_joined" not in HUB_EVENT_TYPES
+    assert CLIENT_EVENT_TYPES == ["client_joined", "client_left"]
+
+
+def test_clients_off_by_default() -> None:
+    """Without the option no client event is ever produced."""
+    det = EventDetector()
+    assert not feed(det, client_snap(), client_snap(client("m1", "A")))
+    assert not det._attached  # noqa: SLF001
+
+
+def test_clients_no_replay_at_baseline() -> None:
+    """Clients already connected at startup raise nothing."""
+    det = tracking()
+    assert (
+        feed(det, client_snap(client("m1", "A")), client_snap(client("m1", "A"))) == []
+    )
+
+
+def test_client_joined_after_baseline_is_debounced() -> None:
+    """A new client joins after two consecutive sightings, carrying its node."""
+    det = tracking()
+    first = feed(det, client_snap(), client_snap(client("m1", "A", "Phone")))
+    assert first == []
+    events = feed(det, client_snap(client("m1", "A", "Phone")))
+    assert events == [
+        VelopEvent(
+            EventType.CLIENT_JOINED, "A", "A", client_name="Phone", client_mac="m1"
+        )
+    ]
+    assert feed(det, client_snap(client("m1", "A", "Phone"))) == []
+
+
+def test_client_join_flap_suppressed() -> None:
+    """A client seen once and gone again raises nothing."""
+    det = tracking()
+    assert not feed(
+        det,
+        client_snap(),
+        client_snap(client("m1", "A")),
+        client_snap(),
+        client_snap(client("m1", "A")),
+        client_snap(),
+    )
+
+
+def test_client_left_when_offline_or_removed() -> None:
+    """A client that goes offline, or vanishes, leaves the node it was on."""
+    det = tracking()
+    feed(det, client_snap(client("m1", "A"), client("m2", "B")))
+    events = feed(
+        det,
+        client_snap(client("m1", None), client("m2", "B")),
+        client_snap(client("m1", None), client("m2", "B")),
+    )
+    assert [(e.type, e.node_serial, e.client_mac) for e in events] == [
+        (EventType.CLIENT_LEFT, "A", "m1")
+    ]
+    gone = feed(det, client_snap(), client_snap())
+    assert [(e.type, e.node_serial, e.client_mac) for e in gone] == [
+        (EventType.CLIENT_LEFT, "B", "m2")
+    ]
+    assert not det._attached  # noqa: SLF001
+
+
+def test_client_roam_leaves_one_node_and_joins_another() -> None:
+    """Moving between nodes is one leave and one join."""
+    det = tracking()
+    feed(det, client_snap(client("m1", "A")))
+    events = feed(det, client_snap(client("m1", "B")), client_snap(client("m1", "B")))
+    assert [(e.type, e.node_serial) for e in events] == [
+        (EventType.CLIENT_LEFT, "A"),
+        (EventType.CLIENT_JOINED, "B"),
+    ]
+
+
+def test_client_events_paused_outside_router_mode() -> None:
+    """Bridge mode reports no clients; that must not look like everyone leaving."""
+    det = tracking()
+    feed(det, client_snap(client("m1", "A")))
+    bridge = client_snap(mode=NetworkMode.BRIDGE)
+    # Only the mode change is announced, never a mass client leave.
+    assert types(feed(det, bridge, bridge, bridge)) == [EventType.MODE_CHANGED]
+    # Back in router mode the client state is re-learned silently.
+    back = client_snap(client("m1", "A"))
+    assert EventType.CLIENT_JOINED not in types(feed(det, back, back, back))
+
+
+def test_client_on_unlisted_node_is_ignored() -> None:
+    """A client on a node that is not in the snapshot has no node to report."""
+    det = tracking()
+    feed(det, client_snap(client("m1", "A")))
+    moved = client_snap(client("m1", "Z"))
+    events = feed(det, moved, moved)
+    assert [(e.type, e.node_serial) for e in events] == [(EventType.CLIENT_LEFT, "A")]

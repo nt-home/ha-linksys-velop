@@ -27,8 +27,17 @@ class EventType(StrEnum):
     FIRMWARE_UPDATE_AVAILABLE = "firmware_update_available"
     MODE_CHANGED = "mode_changed"
     AUTHENTICATION_FAILED = "authentication_failed"
+    CLIENT_JOINED = "client_joined"
+    CLIENT_LEFT = "client_left"
 
 
+CLIENT_EVENT_TYPES: list[str] = [
+    EventType.CLIENT_JOINED.value,
+    EventType.CLIENT_LEFT.value,
+]
+HUB_EVENT_TYPES: list[str] = [
+    e.value for e in EventType if e.value not in CLIENT_EVENT_TYPES
+]
 EVENT_TYPES: list[str] = [e.value for e in EventType]
 
 
@@ -40,6 +49,8 @@ class VelopEvent:
     node_name: str | None = None
     node_serial: str | None = None
     detail: str | None = None
+    client_name: str | None = None
+    client_mac: str | None = None
 
 
 class _Debounced[T]:
@@ -51,6 +62,11 @@ class _Debounced[T]:
         self._seen = False
         self._pending: T | None = None
         self._count = 0
+
+    @property
+    def idle_absent(self) -> bool:
+        """Return True when the value is confirmed None with nothing pending."""
+        return self.confirmed is None and self._pending is None
 
     def observe(self, value: T) -> bool:
         """Record an observation and return True when the value changed."""
@@ -75,9 +91,15 @@ class _Debounced[T]:
 class EventDetector:
     """Compare snapshots and emit events; never replays the initial state."""
 
-    def __init__(self, debounce: int = DEBOUNCE_REFRESHES) -> None:
-        """Create a detector with the given debounce requirement."""
+    def __init__(
+        self, debounce: int = DEBOUNCE_REFRESHES, *, track_clients: bool = False
+    ) -> None:
+        """Create a detector; client join and leave events are opt-in."""
         self._debounce = debounce
+        self._track_clients = track_clients
+        self._attached: dict[str, _Debounced[str | None]] = {}
+        self._clients_seen = False
+        self._labels: dict[str, tuple[str, str]] = {}
         self._baseline = False
         self._wan = _Debounced[bool](debounce)
         self._mode = _Debounced[NetworkMode](debounce)
@@ -93,6 +115,8 @@ class EventDetector:
         self._mode_events(snapshot, events)
         removed = self._node_events(snapshot, events)
         self._firmware_events(snapshot, events)
+        if self._track_clients:
+            self._client_events(snapshot, events)
         self._baseline = True
         return events, removed
 
@@ -158,3 +182,57 @@ class EventDetector:
                     )
                 )
             self._firmware[node.serial] = version
+
+    def _client_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
+        """Emit joined/left per node; a roam is a leave on one and a join on another.
+
+        Only the router reports clients, so bridge mode (or an unknown mode)
+        pauses tracking and forgets the state instead of reporting a mass leave.
+        """
+        if snapshot.mode is not NetworkMode.ROUTER:
+            self._attached.clear()
+            self._clients_seen = False
+            return
+        self._labels.update({n.device_id: (n.name, n.serial) for n in snapshot.nodes})
+        now = {c.mac: c for c in snapshot.clients if c.connected and c.node_device_id}
+        for mac, client in now.items():
+            tracker = self._attached.get(mac)
+            if tracker is None:
+                tracker = self._attached[mac] = _Debounced[str | None](self._debounce)
+                if self._clients_seen:
+                    tracker.observe(None)  # first seen after startup: it just joined
+            self._transition(tracker, client.node_device_id, mac, client.name, events)
+        for mac in sorted(set(self._attached) - set(now)):
+            tracker = self._attached[mac]
+            name = next((c.name for c in snapshot.clients if c.mac == mac), mac)
+            self._transition(tracker, None, mac, name, events)
+            if tracker.idle_absent:
+                del self._attached[mac]
+        self._clients_seen = True
+
+    def _transition(
+        self,
+        tracker: _Debounced[str | None],
+        node_device_id: str | None,
+        mac: str,
+        name: str,
+        events: list[VelopEvent],
+    ) -> None:
+        previous = tracker.confirmed
+        if not tracker.observe(node_device_id):
+            return
+        for kind, device_id in (
+            (EventType.CLIENT_LEFT, previous),
+            (EventType.CLIENT_JOINED, node_device_id),
+        ):
+            label = self._labels.get(device_id) if device_id else None
+            if label is not None:
+                events.append(
+                    VelopEvent(
+                        kind,
+                        label[0],
+                        label[1],
+                        client_name=name,
+                        client_mac=mac,
+                    )
+                )

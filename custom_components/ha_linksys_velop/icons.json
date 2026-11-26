@@ -46,6 +46,9 @@
     "event": {
       "hub_events": {
         "default": "mdi:bell-ring"
+      },
+      "client_events": {
+        "default": "mdi:account-switch"
       }
     }
   },

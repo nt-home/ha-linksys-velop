@@ -44,6 +44,9 @@ ACTION_DEVICE_MODE = f"{JNAP_BASE}nodes/smartmode/GetDeviceMode"
 ACTION_GET_DEVICES = f"{JNAP_BASE}devicelist/GetDevices"
 ACTION_WAN_STATUS = f"{JNAP_BASE}router/GetWANStatus"
 ACTION_BACKHAUL = f"{JNAP_BASE}nodes/diagnostics/GetBackhaulInfo"
+ACTION_WIRELESS_CONNECTIONS = (
+    f"{JNAP_BASE}nodes/networkconnections/GetNodesWirelessNetworkConnections"
+)
 ACTION_FIRMWARE = f"{JNAP_BASE}nodes/firmwareupdate/GetFirmwareUpdateStatus"
 ACTION_SYSTEM_STATS = f"{JNAP_BASE}diagnostics/GetSystemStats"
 ACTION_REBOOT = f"{JNAP_BASE}core/Reboot"
@@ -117,7 +120,18 @@ class VelopClient:
             nodes, clients = (), ()
         if not any(n.role is NodeRole.PRIMARY for n in nodes):
             nodes = (_fallback_primary(identity), *nodes)
+        if wan.mode is NetworkMode.BRIDGE:
+            nodes = await self._bridge_client_counts(nodes)
         return FastSnapshot(wan=wan, nodes=nodes, clients=clients)
+
+    async def _bridge_client_counts(self, nodes: tuple[Node, ...]) -> tuple[Node, ...]:
+        """Count Wi-Fi clients per node; the bridge device list has no parents."""
+        try:
+            output = await self._transport.async_call(ACTION_WIRELESS_CONNECTIONS)
+        except VelopError:
+            _LOGGER.debug("Per-node client counts are unavailable in bridge mode")
+            return mapper.with_client_counts(nodes, None)
+        return mapper.with_client_counts(nodes, mapper.map_wireless_counts(output))
 
     async def async_fetch_slow(self, identity: HubIdentity) -> SlowSnapshot:
         """Fetch firmware status and system statistics."""

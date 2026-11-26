@@ -27,6 +27,7 @@ from custom_components.ha_linksys_velop.const import (
     CONF_USE_SSL,
     DOMAIN,
     OPT_AREAS,
+    OPT_CLIENT_EVENTS,
     OPT_CONSIDER_HOME,
     OPT_FAST_INTERVAL,
     OPT_INCLUDED_CHILDREN,
@@ -616,7 +617,9 @@ async def test_options_flow_full(
     }
     assert mesh[_k(LABEL_2, "Remove node")].default() is False
     assert mesh[_k(LABEL_2, "Name")].default() == "Bedroom"
+    assert cards["presence"][OPT_CLIENT_EVENTS].default() is False
     assert set(cards["presence"]) == {
+        OPT_CLIENT_EVENTS,
         OPT_TRACK_ALL,
         OPT_TRACKED_CLIENTS,
         OPT_CONSIDER_HOME,
@@ -643,6 +646,7 @@ async def test_options_flow_full(
                 _k(LABEL_3, "Remove node"): True,
             },
             "presence": {
+                OPT_CLIENT_EVENTS: True,
                 OPT_TRACK_ALL: False,
                 OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
                 OPT_CONSIDER_HOME: 120,
@@ -654,6 +658,7 @@ async def test_options_flow_full(
     assert mock_entry.options == {
         OPT_FAST_INTERVAL: 30,
         OPT_SLOW_INTERVAL: 20,
+        OPT_CLIENT_EVENTS: True,
         OPT_TRACK_ALL: False,
         OPT_TRACKED_CLIENTS: ["aa:bb:cc:00:00:01"],
         OPT_CONSIDER_HOME: 120,

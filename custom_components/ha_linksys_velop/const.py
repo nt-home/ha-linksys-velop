@@ -29,6 +29,7 @@ OPT_AREAS = "areas"
 OPT_TRACKED_CLIENTS = "tracked_clients"
 OPT_TRACK_ALL = "track_all_clients"
 OPT_CONSIDER_HOME = "consider_home"
+OPT_CLIENT_EVENTS = "client_events"
 
 DEFAULT_FAST_INTERVAL = 60
 MIN_FAST_INTERVAL = 15
@@ -47,4 +48,4 @@ SERVICE_REFRESH_NOW = "refresh_now"
 ISSUE_ACCOUNT_LOCKED = "account_locked"
 
 # Entity keys that only make sense when the hub routes (not in bridge mode).
-ROUTER_ONLY_KEYS = frozenset({"clients_total", "client_count"})
+ROUTER_ONLY_KEYS = frozenset({"clients_total", "client_events"})

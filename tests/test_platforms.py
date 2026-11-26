@@ -13,11 +13,18 @@ from pytest_homeassistant.common import MockConfigEntry
 from custom_components.ha_linksys_velop.const import (
     DOMAIN,
     EVENT_BUS_NAME,
+    OPT_CLIENT_EVENTS,
+    OPT_FAST_INTERVAL,
     OPT_TRACK_ALL,
     OPT_TRACKED_CLIENTS,
 )
 from custom_components.ha_linksys_velop.coordinator import VelopCoordinator
-from tests.emulator.server import PRIMARY_SERIAL, Emulator, three_node_mesh
+from tests.emulator.server import (
+    PRIMARY_SERIAL,
+    Emulator,
+    client_device,
+    three_node_mesh,
+)
 
 
 async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> VelopCoordinator:
@@ -115,8 +122,19 @@ async def test_bridge_mode_skips_router_entities(
     emulator.wan_type = "Bridge"
     await _setup(hass, mock_entry)
     assert hass.states.get("sensor.living_room_operating_mode").state == "bridge"
-    assert hass.states.get("sensor.living_room_connected_clients") is None
-    assert hass.states.get("sensor.bedroom_connected_clients") is None
+    # No hub-wide total in bridge mode, but each node still counts its clients.
+    registry = er.async_get(hass)
+    assert (
+        registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{PRIMARY_SERIAL}_clients_total"
+        )
+        is None
+    )
+    assert (
+        registry.async_get_entity_id("sensor", DOMAIN, f"{PRIMARY_SERIAL}_client_count")
+        is not None
+    )
+    assert hass.states.get("sensor.bedroom_connected_clients").state == "0"
     assert hass.states.get("sensor.bedroom_backhaul_type") is not None
     assert not hass.states.async_entity_ids("device_tracker")
 
@@ -524,3 +542,137 @@ async def test_tracker_consider_home_window(
     entity._consider_home = 10
     entity.coordinator = coordinator
     assert entity.is_connected is False
+
+
+def _enable_client_events(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, OPT_CLIENT_EVENTS: True}
+    )
+
+
+async def test_client_events_off_by_default(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """No client activity entity or bus event exists unless opted in."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.devices.append(client_device(9, "node-3"))
+    await _refresh(hass, coordinator, 3)
+    assert hass.states.get("event.office_client_activity") is None
+    assert hass.states.get("event.living_room_client_activity") is None
+    assert events == []
+
+
+async def test_client_join_leave_events_per_node(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A client joining, roaming and leaving fires on the node it touched."""
+    _enable_client_events(hass, mock_entry)
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    for name in ("living_room", "bedroom", "office"):
+        assert hass.states.get(f"event.{name}_client_activity") is not None
+    assert events == []
+
+    emulator.devices.append(client_device(9, "node-3"))
+    await _refresh(hass, coordinator)
+    assert events == []
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == ["client_joined"]
+    data = events[0].data
+    assert data["node_name"] == "Office"
+    assert data["node_serial"] == "12K10M33333333"
+    assert data["client_name"] == "client-9"
+    assert data["client_mac"] == "aa:bb:cc:00:00:09"
+    devices = dr.async_get(hass)
+    office = devices.async_get_device_by_identifier(
+        (DOMAIN, "12K10M33333333"), mock_entry.entry_id
+    )
+    assert data["device_id"] == office.id
+    office_state = hass.states.get("event.office_client_activity")
+    assert office_state.attributes["event_type"] == "client_joined"
+    assert office_state.attributes["client_name"] == "client-9"
+    assert (
+        hass.states.get("event.bedroom_client_activity").attributes["event_type"]
+        is None
+    )
+    # The hub events entity never receives client events.
+    assert hass.states.get("event.living_room_events").attributes["event_type"] is None
+
+    emulator.devices[-1]["connections"][0]["parentDeviceID"] = "node-2"
+    await _refresh(hass, coordinator, 2)
+    assert [(e.data["type"], e.data["node_name"]) for e in events[1:]] == [
+        ("client_left", "Office"),
+        ("client_joined", "Bedroom"),
+    ]
+    assert (
+        hass.states.get("event.bedroom_client_activity").attributes["event_type"]
+        == "client_joined"
+    )
+
+    emulator.devices[-1]["connections"] = []
+    await _refresh(hass, coordinator, 2)
+    assert (events[-1].data["type"], events[-1].data["node_name"]) == (
+        "client_left",
+        "Bedroom",
+    )
+    assert len(events) == 4
+
+
+async def test_client_events_removed_when_option_off(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Switching the option off removes the per-node entities on reload."""
+    _enable_client_events(hass, mock_entry)
+    await _setup(hass, mock_entry)
+    registry = er.async_get(hass)
+    assert registry.async_get("event.office_client_activity") is not None
+    hass.config_entries.async_update_entry(mock_entry, options={})
+    await hass.config_entries.async_reload(mock_entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get("event.office_client_activity") is None
+    assert registry.async_get("event.living_room_events") is not None
+
+
+async def test_client_events_not_created_in_bridge_mode(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Bridge mode has no client data, so no client activity entities exist."""
+    emulator.wan_type = "Bridge"
+    _enable_client_events(hass, mock_entry)
+    await _setup(hass, mock_entry)
+    assert hass.states.get("event.office_client_activity") is None
+    assert hass.states.get("event.living_room_events") is not None
+
+
+async def test_node_client_count_follows_refresh_interval(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Per-node client counts update on every refresh, at the Velop options rate."""
+    mock_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(mock_entry, options={OPT_FAST_INTERVAL: 45})
+    coordinator = await _setup(hass, mock_entry)
+    assert coordinator.update_interval.total_seconds() == 45
+    assert hass.states.get("sensor.bedroom_connected_clients").state == "2"
+    assert hass.states.get("sensor.office_connected_clients").state == "0"
+    emulator.devices.append(client_device(9, "node-3"))
+    emulator.devices[3]["connections"] = []  # client-1 (on node-2) disconnects
+    await _refresh(hass, coordinator)
+    assert hass.states.get("sensor.bedroom_connected_clients").state == "1"
+    assert hass.states.get("sensor.office_connected_clients").state == "1"
+
+
+async def test_bridge_mode_node_client_count_refreshes(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """In bridge mode the node count is its Wi-Fi clients, refreshed each poll."""
+    emulator.wan_type = "Bridge"
+    emulator.wireless = [{"deviceID": "node-2", "connections": [{}, {}, {}]}]
+    coordinator = await _setup(hass, mock_entry)
+    assert hass.states.get("sensor.bedroom_connected_clients").state == "3"
+    assert hass.states.get("sensor.office_connected_clients").state == "0"
+    emulator.wireless = [{"deviceID": "node-3", "connections": [{}]}]
+    await _refresh(hass, coordinator)
+    assert hass.states.get("sensor.bedroom_connected_clients").state == "0"
+    assert hass.states.get("sensor.office_connected_clients").state == "1"

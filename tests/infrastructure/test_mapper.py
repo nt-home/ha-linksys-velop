@@ -422,7 +422,8 @@ def test_devices_hostile_entries_and_fields() -> None:
     )
     assert len(nodes) == 1
     assert nodes[0].ip_address is None and nodes[0].mac is None
-    assert nodes[0].client_count == 2
+    # One client holding two connections is still counted once.
+    assert nodes[0].client_count == 1
     assert len(clients) == 1 and clients[0].name == "aa:aa:aa:aa:aa:aa"
 
 
@@ -574,3 +575,18 @@ def test_infrastructure_without_serial_is_dropped() -> None:
     dev["unit"] = {}
     nodes, clients = mapper.map_devices({"devices": [dev]}, {}, include_clients=True)
     assert (nodes, clients) == ((), ())
+
+
+def test_wireless_counts_hostile_and_valid() -> None:
+    """Only well-formed per-node entries are counted."""
+    out = {
+        "nodeWirelessConnections": [
+            {"deviceID": "n1", "connections": [{}, "x", {}]},
+            {"deviceID": "n2", "connections": None},
+            {"connections": [{}]},
+            "junk",
+        ]
+    }
+    assert mapper.map_wireless_counts(out) == {"n1": 2, "n2": 0}
+    assert mapper.map_wireless_counts({"nodeWirelessConnections": 5}) == {}
+    assert mapper.map_wireless_counts({}) == {}

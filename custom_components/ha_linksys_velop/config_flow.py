@@ -50,6 +50,7 @@ from .const import (
     MIN_FAST_INTERVAL,
     MIN_SLOW_INTERVAL,
     OPT_AREAS,
+    OPT_CLIENT_EVENTS,
     OPT_CONSIDER_HOME,
     OPT_FAST_INTERVAL,
     OPT_INCLUDED_CHILDREN,
@@ -386,8 +387,11 @@ class VelopOptionsFlow(OptionsFlowWithReload):
             )
         presence: dict[Any, Any] = {
             probatio.Optional(
+                OPT_CLIENT_EVENTS, default=opts.get(OPT_CLIENT_EVENTS, False)
+            ): BooleanSelector(),
+            probatio.Optional(
                 OPT_TRACK_ALL, default=opts.get(OPT_TRACK_ALL, False)
-            ): BooleanSelector()
+            ): BooleanSelector(),
         }
         if clients:
             presence[
@@ -469,6 +473,7 @@ class VelopOptionsFlow(OptionsFlowWithReload):
         options: dict[str, Any] = {
             OPT_FAST_INTERVAL: int(refresh[OPT_FAST_INTERVAL]),
             OPT_SLOW_INTERVAL: int(refresh[OPT_SLOW_INTERVAL]),
+            OPT_CLIENT_EVENTS: presence.get(OPT_CLIENT_EVENTS, False),
             OPT_TRACK_ALL: presence.get(OPT_TRACK_ALL, False),
             OPT_TRACKED_CLIENTS: list(presence.get(OPT_TRACKED_CLIENTS, [])),
             OPT_CONSIDER_HOME: int(
