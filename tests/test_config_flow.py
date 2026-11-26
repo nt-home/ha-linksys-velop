@@ -775,5 +775,5 @@ async def test_options_form_serialises_for_the_frontend(
     assert all(f["type"] == "expandable" for f in fields)
     nodes = next(f for f in fields if f["name"] == "nodes")
     # Home Assistant does not support nesting sections, so every field is flat.
-    assert all(f["type"] != "expandable" for f in nodes["schema"])
+    assert all(f.get("type") != "expandable" for f in nodes["schema"])
     assert len(nodes["schema"]) == 8
