@@ -36,7 +36,7 @@ disallow_untyped_decorators = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=custom_components.ha_linksys_velop --cov-report=term-missing"
+addopts = "-p no:respx --cov=custom_components.ha_linksys_velop --cov-report=term-missing"
 
 [tool.coverage.run]
 branch = true
