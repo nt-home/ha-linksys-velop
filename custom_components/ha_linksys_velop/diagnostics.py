@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .coordinator import VelopConfigEntry
+    from .domain.models import HubSnapshot
 
 TO_REDACT = {
     CONF_PASSWORD,
@@ -23,6 +24,20 @@ TO_REDACT = {
     "unique_id",
     "title",
 }
+
+
+def _speed_summary(snapshot: HubSnapshot) -> dict[str, Any] | None:
+    state = snapshot.speed_test
+    if state is None:
+        return None
+    latest = state.latest
+    return {
+        "running": state.running,
+        "last_exit_code": latest.exit_code if latest else None,
+        "last_download_mbps": latest.download_mbps if latest else None,
+        "last_upload_mbps": latest.upload_mbps if latest else None,
+        "last_latency_ms": latest.latency_ms if latest else None,
+    }
 
 
 async def async_get_config_entry_diagnostics(
@@ -57,5 +72,7 @@ async def async_get_config_entry_diagnostics(
         ],
         "client_count": len(snapshot.clients),
         "wan_status": snapshot.wan.status,
+        "channel_scan_running": snapshot.channel_scan_running,
+        "speed_test": _speed_summary(snapshot),
         "last_update_success": entry.runtime_data.last_update_success,
     }

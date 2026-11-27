@@ -590,3 +590,130 @@ def test_wireless_counts_hostile_and_valid() -> None:
     assert mapper.map_wireless_counts(out) == {"n1": 2, "n2": 0}
     assert mapper.map_wireless_counts({"nodeWirelessConnections": 5}) == {}
     assert mapper.map_wireless_counts({}) == {}
+
+
+# channel scan and speed check -------------------------------------------------
+
+
+def _speed_item(
+    result_id: int,
+    code: str = "Success",
+    *,
+    down: object = 92000,
+    up: object = 95000,
+    latency: object = 3,
+    timestamp: object = "2026-11-27T08:46:00Z",
+) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "speedTestResult": {
+            "resultID": result_id,
+            "exitCode": code,
+            "downloadBandwidth": down,
+            "uploadBandwidth": up,
+            "latency": latency,
+            "serverID": "42",
+        },
+    }
+
+
+def test_channel_scan_flag() -> None:
+    """Only a real boolean counts as a scan state."""
+    assert mapper.map_channel_scan({"isRunning": True}) is True
+    assert mapper.map_channel_scan({"isRunning": False}) is False
+    for bad in HOSTILE:
+        assert mapper.map_channel_scan({"isRunning": bad}) is (
+            bad if isinstance(bad, bool) else None
+        )
+    assert mapper.map_channel_scan({}) is None
+
+
+def test_speed_test_none_when_nothing_usable() -> None:
+    """Both answers missing means the feature is unknown."""
+    assert mapper.map_speed_test(None, None) is None
+
+
+def test_speed_test_idle_with_latest_result() -> None:
+    """Kbps become Mbps and the newest finished result wins."""
+    state = mapper.map_speed_test(
+        {},
+        {
+            "healthCheckResults": [
+                _speed_item(7, down=50000),
+                _speed_item(9),
+                _speed_item(8, "AbortedByUser"),
+            ]
+        },
+    )
+    assert state is not None
+    assert state.running is False
+    latest = state.latest
+    assert latest is not None
+    assert latest.result_id == 9
+    assert (latest.download_mbps, latest.upload_mbps, latest.latency_ms) == (
+        92.0,
+        95.0,
+        3.0,
+    )
+    assert latest.success
+    assert latest.timestamp is not None
+    assert latest.timestamp.tzinfo is not None
+    assert latest.server_id == "42"
+
+
+def test_speed_test_running_hides_pending_result() -> None:
+    """A NotAvailable item is a run in progress, never the latest result."""
+    pending = _speed_item(10, "NotAvailable", down=0, up=0, latency=0)
+    state = mapper.map_speed_test(
+        pending, {"healthCheckResults": [pending, _speed_item(9)]}
+    )
+    assert state is not None
+    assert state.running is True
+    assert state.latest is not None
+    assert state.latest.result_id == 9
+    unavailable = mapper.map_speed_test(_speed_item(11, "Unavailable"), None)
+    assert unavailable is not None
+    assert unavailable.running is True
+    assert unavailable.latest is None
+
+
+def test_speed_test_failure_and_naive_timestamp() -> None:
+    """A failed run keeps its exit code; naive timestamps are read as UTC."""
+    state = mapper.map_speed_test(
+        None,
+        {
+            "healthCheckResults": [
+                _speed_item(
+                    3, "SpeedTestExecutionError", timestamp="2026-11-27T08:46:00"
+                )
+            ]
+        },
+    )
+    assert state is not None
+    assert state.latest is not None
+    assert not state.latest.success
+    assert state.latest.exit_code == "SpeedTestExecutionError"
+    assert state.latest.timestamp is not None
+    assert state.latest.timestamp.utcoffset() is not None
+
+
+@pytest.mark.parametrize("bad", HOSTILE)
+def test_speed_test_hostile_values(bad: Any) -> None:
+    """Hostile field values never raise and never leak through."""
+    item = _speed_item(1, bad, down=bad, up=bad, latency=bad, timestamp=bad)
+    state = mapper.map_speed_test(item, {"healthCheckResults": [item, bad]})
+    assert state is not None
+    if state.latest is not None:
+        assert state.latest.timestamp is None
+    mapper.map_speed_test({"speedTestResult": bad}, {"healthCheckResults": bad})
+
+
+def test_speed_test_bad_timestamp_and_result_id() -> None:
+    """An unparsable timestamp or missing id leaves those fields empty."""
+    item = _speed_item(1, timestamp="not a date")
+    del item["speedTestResult"]["resultID"]
+    state = mapper.map_speed_test({}, {"healthCheckResults": [item]})
+    assert state is not None
+    assert state.latest is not None
+    assert state.latest.result_id is None
+    assert state.latest.timestamp is None

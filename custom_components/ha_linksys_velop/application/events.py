@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 from ..domain.models import NetworkMode
 
 if TYPE_CHECKING:
-    from ..domain.models import HubSnapshot
+    from collections.abc import Mapping
+
+    from ..domain.models import HubSnapshot, SpeedTestResult
 
 DEBOUNCE_REFRESHES = 2
 ABSENT_LIMIT = 3
@@ -29,6 +31,11 @@ class EventType(StrEnum):
     AUTHENTICATION_FAILED = "authentication_failed"
     CLIENT_JOINED = "client_joined"
     CLIENT_LEFT = "client_left"
+    CHANNEL_SCAN_STARTED = "channel_scan_started"
+    CHANNEL_SCAN_COMPLETED = "channel_scan_completed"
+    SPEED_TEST_STARTED = "speed_test_started"
+    SPEED_TEST_COMPLETED = "speed_test_completed"
+    SPEED_TEST_FAILED = "speed_test_failed"
 
 
 CLIENT_EVENT_TYPES: list[str] = [
@@ -51,6 +58,7 @@ class VelopEvent:
     detail: str | None = None
     client_name: str | None = None
     client_mac: str | None = None
+    data: Mapping[str, float | int | str] | None = None
 
 
 class _Debounced[T]:
@@ -107,6 +115,9 @@ class EventDetector:
         self._known: set[str] = set()
         self._absent: dict[str, int] = {}
         self._firmware: dict[str, str | None] = {}
+        self._scan_running: bool | None = None
+        self._speed_running: bool | None = None
+        self._speed_id: int | None = None
 
     def update(self, snapshot: HubSnapshot) -> tuple[list[VelopEvent], list[str]]:
         """Return detected events and serials that should be removed."""
@@ -115,6 +126,7 @@ class EventDetector:
         self._mode_events(snapshot, events)
         removed = self._node_events(snapshot, events)
         self._firmware_events(snapshot, events)
+        self._activity_events(snapshot, events)
         if self._track_clients:
             self._client_events(snapshot, events)
         self._baseline = True
@@ -183,6 +195,35 @@ class EventDetector:
                 )
             self._firmware[node.serial] = version
 
+    def _activity_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
+        """Emit start/finish events for Channel Finder and the speed check.
+
+        These are not debounced: the hub states them explicitly. A run that
+        was already going when the integration started is not replayed.
+        """
+        scan = snapshot.channel_scan_running
+        if scan is not None:
+            if self._baseline and self._scan_running is not None:
+                if scan and not self._scan_running:
+                    events.append(VelopEvent(EventType.CHANNEL_SCAN_STARTED))
+                elif self._scan_running and not scan:
+                    events.append(VelopEvent(EventType.CHANNEL_SCAN_COMPLETED))
+            self._scan_running = scan
+        speed = snapshot.speed_test
+        if speed is None:
+            return
+        known = self._baseline and self._speed_running is not None
+        if known and speed.running and not self._speed_running:
+            events.append(VelopEvent(EventType.SPEED_TEST_STARTED))
+        latest = speed.latest
+        if latest is not None:
+            fresh = latest.result_id is not None and latest.result_id != self._speed_id
+            if known and fresh:
+                events.append(_speed_finished(latest))
+            if latest.result_id is not None:
+                self._speed_id = latest.result_id
+        self._speed_running = speed.running
+
     def _client_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
         """Emit joined/left per node; a roam is a leave on one and a join on another.
 
@@ -236,3 +277,16 @@ class EventDetector:
                         client_mac=mac,
                     )
                 )
+
+
+def _speed_finished(result: SpeedTestResult) -> VelopEvent:
+    if not result.success:
+        return VelopEvent(EventType.SPEED_TEST_FAILED, detail=result.exit_code)
+    data: dict[str, float | int | str] = {}
+    if result.download_mbps is not None:
+        data["download_mbps"] = result.download_mbps
+    if result.upload_mbps is not None:
+        data["upload_mbps"] = result.upload_mbps
+    if result.latency_ms is not None:
+        data["latency_ms"] = result.latency_ms
+    return VelopEvent(EventType.SPEED_TEST_COMPLETED, data=data)

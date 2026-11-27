@@ -19,6 +19,7 @@ from custom_components.ha_linksys_velop.domain.errors import (
     InvalidAuthError,
     JnapResultError,
     NotPrimaryNodeError,
+    OperationInProgressError,
     UnknownActionError,
     UnsupportedDeviceError,
 )
@@ -78,6 +79,7 @@ def test_raise_for_result_ok() -> None:
         ("ErrorPasswordCheckDelayed", AccountLockedError),
         ("_ErrorUnknownAction", UnknownActionError),
         ("ErrorDeviceNotInMasterMode", NotPrimaryNodeError),
+        ("ErrorAutoChannelSelectionAlreadyInProgress", OperationInProgressError),
         ("_ErrorSomethingElse", JnapResultError),
     ],
 )
@@ -86,7 +88,7 @@ def test_raise_for_result_mapping(result: str, exc: type[Exception]) -> None:
     with pytest.raises(exc) as info:
         raise_for_result(result)
     assert type(info.value) is exc
-    if exc in (UnknownActionError, JnapResultError):
+    if exc in (UnknownActionError, JnapResultError, OperationInProgressError):
         assert info.value.result == result  # type: ignore[attr-defined]
 
 

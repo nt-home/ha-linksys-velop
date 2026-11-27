@@ -22,6 +22,8 @@ from custom_components.ha_linksys_velop.domain.models import (
     NetworkMode,
     Node,
     NodeRole,
+    SpeedTestResult,
+    SpeedTestState,
     SystemStats,
     WanStatus,
 )
@@ -396,3 +398,101 @@ def test_client_on_unlisted_node_is_ignored() -> None:
     moved = client_snap(client("m1", "Z"))
     events = feed(det, moved, moved)
     assert [(e.type, e.node_serial) for e in events] == [(EventType.CLIENT_LEFT, "A")]
+
+
+# channel scan and speed check -------------------------------------------------
+
+
+def act(
+    *,
+    scan: bool | None = False,
+    speed: SpeedTestState | None = None,
+) -> HubSnapshot:
+    """Build a snapshot carrying activity state."""
+    base = snap()
+    return HubSnapshot(
+        identity=base.identity,
+        wan=base.wan,
+        nodes=base.nodes,
+        clients=base.clients,
+        firmware=base.firmware,
+        stats=base.stats,
+        channel_scan_running=scan,
+        speed_test=speed,
+    )
+
+
+def result(result_id: int, code: str = "Success") -> SpeedTestResult:
+    """Build a finished speed result."""
+    return SpeedTestResult(result_id, None, code, 92.0, 95.0, 3.0)
+
+
+def test_channel_scan_events() -> None:
+    """Start and finish fire once each and never replay at baseline."""
+    det = EventDetector()
+    assert feed(det, act(scan=True)) == []
+    assert types(feed(det, act(scan=True))) == []
+    assert types(feed(det, act(scan=False))) == [EventType.CHANNEL_SCAN_COMPLETED]
+    assert feed(det, act(scan=False)) == []
+    assert types(feed(det, act(scan=True))) == [EventType.CHANNEL_SCAN_STARTED]
+
+
+def test_channel_scan_unsupported_is_silent() -> None:
+    """None means unsupported: no events and no state kept."""
+    det = EventDetector()
+    assert feed(det, act(scan=None), act(scan=None)) == []
+    assert feed(det, act(scan=False)) == []
+    assert types(feed(det, act(scan=True))) == [EventType.CHANNEL_SCAN_STARTED]
+
+
+def test_speed_test_events() -> None:
+    """A run fires started, then completed with the numbers."""
+    det = EventDetector()
+    idle = SpeedTestState(False, result(1))
+    assert feed(det, act(speed=idle)) == []
+    started = feed(det, act(speed=SpeedTestState(True, result(1))))
+    assert types(started) == [EventType.SPEED_TEST_STARTED]
+    assert feed(det, act(speed=SpeedTestState(True, result(1)))) == []
+    done = feed(det, act(speed=SpeedTestState(False, result(2))))
+    assert types(done) == [EventType.SPEED_TEST_COMPLETED]
+    assert done[0].data == {
+        "download_mbps": 92.0,
+        "upload_mbps": 95.0,
+        "latency_ms": 3.0,
+    }
+    assert feed(det, act(speed=SpeedTestState(False, result(2)))) == []
+
+
+def test_speed_test_failed_event() -> None:
+    """A finished run without a success exit code is a failure event."""
+    det = EventDetector()
+    feed(det, act(speed=SpeedTestState(False, None)))
+    out = feed(det, act(speed=SpeedTestState(False, result(1, "AbortedByUser"))))
+    assert types(out) == [EventType.SPEED_TEST_FAILED]
+    assert out[0].detail == "AbortedByUser"
+    assert out[0].data is None
+
+
+def test_speed_test_completed_without_numbers() -> None:
+    """Missing numbers are left out of the event data."""
+    det = EventDetector()
+    feed(det, act(speed=SpeedTestState(False, None)))
+    bare = SpeedTestResult(5, None, "Success")
+    out = feed(det, act(speed=SpeedTestState(False, bare)))
+    assert types(out) == [EventType.SPEED_TEST_COMPLETED]
+    assert out[0].data == {}
+
+
+def test_speed_test_existing_result_not_replayed_and_idless_ignored() -> None:
+    """The first result is baseline; results without an id never fire."""
+    det = EventDetector()
+    assert feed(det, act(speed=SpeedTestState(False, result(4)))) == []
+    idless = SpeedTestResult(None, None, "Success")
+    assert feed(det, act(speed=SpeedTestState(False, idless))) == []
+    assert feed(det, act(speed=SpeedTestState(False, result(4)))) == []
+
+
+def test_speed_test_unsupported_is_silent() -> None:
+    """No speed state means nothing to report."""
+    det = EventDetector()
+    assert feed(det, act(speed=None), act(speed=None)) == []

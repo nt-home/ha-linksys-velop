@@ -50,3 +50,7 @@ class InvalidHostError(VelopError):
 
 class SecretUnavailableError(VelopError):
     """The stored admin password cannot be decrypted (missing or wrong key)."""
+
+
+class OperationInProgressError(JnapResultError):
+    """The hub is already running the requested operation."""

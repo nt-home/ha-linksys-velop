@@ -22,6 +22,7 @@ from ..domain.models import (
     Node,
     NodeRole,
     SlowSnapshot,
+    SpeedTestState,
     SystemStats,
     WanStatus,
 )
@@ -49,6 +50,17 @@ ACTION_WIRELESS_CONNECTIONS = (
 )
 ACTION_FIRMWARE = f"{JNAP_BASE}nodes/firmwareupdate/GetFirmwareUpdateStatus"
 ACTION_SYSTEM_STATS = f"{JNAP_BASE}diagnostics/GetSystemStats"
+ACTION_CHANNEL_SCAN_STATUS = f"{JNAP_BASE}nodes/setup/GetSelectedChannels"
+ACTION_CHANNEL_SCAN_START = f"{JNAP_BASE}nodes/setup/StartAutoChannelSelection"
+ACTION_SPEED_STATUS = f"{JNAP_BASE}healthcheck/GetHealthCheckStatus"
+ACTION_SPEED_RESULTS = f"{JNAP_BASE}healthcheck/GetHealthCheckResults"
+ACTION_SPEED_START = f"{JNAP_BASE}healthcheck/RunHealthCheck"
+SPEED_TEST_MODULE = "SpeedTest"
+SPEED_RESULTS_REQUEST = {
+    "healthCheckModule": SPEED_TEST_MODULE,
+    "includeModuleResults": True,
+    "lastNumberOfResults": 5,
+}
 ACTION_REBOOT = f"{JNAP_BASE}core/Reboot"
 ACTION_REBOOT_NODE = f"{JNAP_BASE}core/Reboot2"
 
@@ -94,7 +106,7 @@ class VelopClient:
         _raise_if_fatal(responses[0])
 
     async def async_fetch_fast(self, identity: HubIdentity) -> FastSnapshot:
-        """Fetch WAN status, nodes and clients in one transaction."""
+        """Fetch WAN status, nodes, clients and activity in one transaction."""
         responses = await self._transport.async_transaction(
             [
                 # The hub authenticates a transaction by its first action, and
@@ -102,9 +114,14 @@ class VelopClient:
                 JnapAction(ACTION_GET_DEVICES, {"sinceRevision": 0}),
                 JnapAction(ACTION_BACKHAUL),
                 JnapAction(ACTION_WAN_STATUS),
+                JnapAction(ACTION_CHANNEL_SCAN_STATUS),
+                JnapAction(ACTION_SPEED_STATUS),
+                JnapAction(ACTION_SPEED_RESULTS, SPEED_RESULTS_REQUEST),
             ]
         )
-        devices_resp, backhaul_resp, wan_resp = responses
+        devices_resp, backhaul_resp, wan_resp, scan_resp, speed_resp, results_resp = (
+            responses
+        )
         for response in responses:
             _raise_if_fatal(response)
         wan = _wan_or_unknown(wan_resp)
@@ -122,7 +139,15 @@ class VelopClient:
             nodes = (_fallback_primary(identity), *nodes)
         if wan.mode is NetworkMode.BRIDGE:
             nodes = await self._bridge_client_counts(nodes)
-        return FastSnapshot(wan=wan, nodes=nodes, clients=clients)
+        return FastSnapshot(
+            wan=wan,
+            nodes=nodes,
+            clients=clients,
+            channel_scan_running=(
+                mapper.map_channel_scan(scan_resp.output) if scan_resp.ok else None
+            ),
+            speed_test=_speed_state(speed_resp, results_resp),
+        )
 
     async def _bridge_client_counts(self, nodes: tuple[Node, ...]) -> tuple[Node, ...]:
         """Count Wi-Fi clients per node; the bridge device list has no parents."""
@@ -154,6 +179,16 @@ class VelopClient:
         except CannotConnectError:
             _LOGGER.debug("Connection dropped while rebooting; treating as success")
 
+    async def async_start_channel_scan(self) -> None:
+        """Start Channel Finder (auto channel selection) on the mesh."""
+        await self._transport.async_call(ACTION_CHANNEL_SCAN_START)
+
+    async def async_start_speed_test(self) -> None:
+        """Start a speed check from the hub."""
+        await self._transport.async_call(
+            ACTION_SPEED_START, {"runHealthCheckModule": SPEED_TEST_MODULE}
+        )
+
     async def _reboot(self, node: Node) -> None:
         if node.role is NodeRole.PRIMARY:
             await self._transport.async_call(ACTION_REBOOT)
@@ -180,6 +215,12 @@ def _raise_if_fatal(response: JnapResponse) -> None:
         raise
     except VelopError:
         _LOGGER.debug("Action failed with result %s", response.result)
+
+
+def _speed_state(status: JnapResponse, results: JnapResponse) -> SpeedTestState | None:
+    return mapper.map_speed_test(
+        status.output if status.ok else None, results.output if results.ok else None
+    )
 
 
 def _wan_or_unknown(response: JnapResponse) -> WanStatus:

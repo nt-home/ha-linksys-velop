@@ -138,6 +138,18 @@
     },
     "secret_unavailable": {
       "message": "The stored admin password could not be decrypted. Reauthenticate to enter it again."
+    },
+    "not_supported": {
+      "message": "This router firmware does not offer that feature."
+    },
+    "channel_scan_running": {
+      "message": "A channel scan is already running."
+    },
+    "speed_test_running": {
+      "message": "A speed check is already running."
+    },
+    "start_failed": {
+      "message": "The router did not accept the command."
     }
   },
   "issues": {
@@ -153,11 +165,23 @@
       },
       "node_connectivity": {
         "name": "Connectivity"
+      },
+      "channel_scan_running": {
+        "name": "Channel scan running"
+      },
+      "speed_test_running": {
+        "name": "Speed check running"
       }
     },
     "button": {
       "reboot": {
         "name": "Reboot"
+      },
+      "channel_scan": {
+        "name": "Scan channels"
+      },
+      "speed_test": {
+        "name": "Start speed check"
       }
     },
     "event": {
@@ -174,7 +198,12 @@
               "node_removed": "Node removed",
               "firmware_update_available": "Firmware update available",
               "mode_changed": "Mode changed",
-              "authentication_failed": "Authentication failed"
+              "authentication_failed": "Authentication failed",
+              "channel_scan_started": "Channel scan started",
+              "channel_scan_completed": "Channel scan completed",
+              "speed_test_started": "Speed check started",
+              "speed_test_completed": "Speed check completed",
+              "speed_test_failed": "Speed check failed"
             }
           }
         }
@@ -238,6 +267,21 @@
       },
       "parent_node": {
         "name": "Parent node"
+      },
+      "speed_test_download": {
+        "name": "Speed check download"
+      },
+      "speed_test_upload": {
+        "name": "Speed check upload"
+      },
+      "speed_test_latency": {
+        "name": "Speed check ping"
+      },
+      "speed_test_last_run": {
+        "name": "Speed check last run"
+      },
+      "speed_test_result": {
+        "name": "Speed check result"
       }
     },
     "update": {

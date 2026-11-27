@@ -676,3 +676,287 @@ async def test_bridge_mode_node_client_count_refreshes(
     await _refresh(hass, coordinator)
     assert hass.states.get("sensor.bedroom_connected_clients").state == "0"
     assert hass.states.get("sensor.office_connected_clients").state == "1"
+
+
+# channel scan and speed check -------------------------------------------------
+
+
+async def test_activity_entities_created(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """The primary node gets the buttons, running sensors and result sensors."""
+    await _setup(hass, mock_entry)
+    for entity_id in (
+        "button.living_room_scan_channels",
+        "button.living_room_start_speed_check",
+        "binary_sensor.living_room_channel_scan_running",
+        "binary_sensor.living_room_speed_check_running",
+        "sensor.living_room_speed_check_download",
+        "sensor.living_room_speed_check_upload",
+        "sensor.living_room_speed_check_ping",
+        "sensor.living_room_speed_check_last_run",
+    ):
+        assert hass.states.get(entity_id) is not None, entity_id
+    assert hass.states.get("button.bedroom_scan_channels") is None
+    assert hass.states.get("button.bedroom_start_speed_check") is None
+    assert hass.states.get("sensor.living_room_speed_check_download").state == "unknown"
+    registry = er.async_get(hass)
+    entry = registry.async_get("sensor.living_room_speed_check_download")
+    assert entry is not None
+    assert entry.entity_category is not None
+    assert entry.entity_category.value == "diagnostic"
+    result = registry.async_get("sensor.living_room_speed_check_result")
+    assert result is not None
+    assert result.disabled
+
+
+async def test_activity_entities_absent_when_unsupported(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Firmware without the actions gets none of the new entities."""
+    emulator.unknown_actions |= {
+        "http://linksys.com/jnap/nodes/setup/GetSelectedChannels",
+        "http://linksys.com/jnap/healthcheck/GetHealthCheckStatus",
+        "http://linksys.com/jnap/healthcheck/GetHealthCheckResults",
+    }
+    await _setup(hass, mock_entry)
+    assert hass.states.get("button.living_room_reboot") is not None
+    for entity_id in (
+        "button.living_room_scan_channels",
+        "button.living_room_start_speed_check",
+        "binary_sensor.living_room_channel_scan_running",
+        "binary_sensor.living_room_speed_check_running",
+        "sensor.living_room_speed_check_download",
+    ):
+        assert hass.states.get(entity_id) is None, entity_id
+
+
+async def test_speed_check_button_events_and_sensors(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Pressing the button runs a check; results and events follow."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": "button.living_room_start_speed_check"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert emulator.speed_starts == 1
+    assert coordinator.data.speed_test is not None
+    assert coordinator.data.speed_test.running is True
+    assert coordinator.update_interval is not None
+    assert coordinator.update_interval.total_seconds() == 5
+    assert (
+        hass.states.get("binary_sensor.living_room_speed_check_running").state == "on"
+    )
+    with pytest.raises(HomeAssistantError):  # already running
+        await hass.services.async_call(
+            "button",
+            "press",
+            {"entity_id": "button.living_room_start_speed_check"},
+            blocking=True,
+        )
+    assert emulator.speed_starts == 1
+    emulator.finish_speed()
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == [
+        "speed_test_started",
+        "speed_test_completed",
+    ]
+    done = events[-1].data
+    assert (done["download_mbps"], done["upload_mbps"], done["latency_ms"]) == (
+        92.0,
+        95.0,
+        3.0,
+    )
+    assert done["device_id"]
+    assert hass.states.get("sensor.living_room_speed_check_download").state == "92.0"
+    assert hass.states.get("sensor.living_room_speed_check_upload").state == "95.0"
+    assert hass.states.get("sensor.living_room_speed_check_ping").state == "3.0"
+    assert (
+        hass.states.get("sensor.living_room_speed_check_last_run").state
+        == "2026-11-27T08:47:00+00:00"
+    )
+    assert (
+        hass.states.get("binary_sensor.living_room_speed_check_running").state == "off"
+    )
+    entity_state = hass.states.get("event.living_room_events")
+    assert entity_state.attributes["event_type"] == "speed_test_completed"
+    assert entity_state.attributes["download_mbps"] == 92.0
+    assert coordinator.update_interval.total_seconds() == 5  # inside the grace window
+
+
+async def test_speed_check_failed_event(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """An aborted run fires the failed event with the exit code."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    await coordinator.async_start_speed_test()
+    emulator.finish_speed(exit_code="SpeedTestExecutionError")
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events][-1] == "speed_test_failed"
+    assert events[-1].data["detail"] == "SpeedTestExecutionError"
+
+
+async def test_channel_scan_button_and_events(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Scan Channels starts Channel Finder and reports its start and end."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": "button.living_room_scan_channels"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert emulator.scan_starts == 1
+    assert (
+        hass.states.get("binary_sensor.living_room_channel_scan_running").state == "on"
+    )
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "button",
+            "press",
+            {"entity_id": "button.living_room_scan_channels"},
+            blocking=True,
+        )
+    assert emulator.scan_starts == 1
+    emulator.finish_scan()
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == [
+        "channel_scan_started",
+        "channel_scan_completed",
+    ]
+    assert (
+        hass.states.get("binary_sensor.living_room_channel_scan_running").state == "off"
+    )
+
+
+async def test_app_started_run_is_detected(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A scan or speed check started elsewhere (the app) is seen too."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.scan_running = True
+    emulator.speed_starts = 1
+    emulator.speed_running = True
+    await _refresh(hass, coordinator)
+    assert {e.data["type"] for e in events} == {
+        "channel_scan_started",
+        "speed_test_started",
+    }
+    assert coordinator.update_interval is not None
+    assert coordinator.update_interval.total_seconds() == 5
+
+
+async def test_polling_returns_to_normal_when_idle(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Without a run and outside the grace window the normal interval returns."""
+    coordinator = await _setup(hass, mock_entry)
+    coordinator._active_until = 0.0  # noqa: SLF001
+    await _refresh(hass, coordinator)
+    assert coordinator.update_interval is not None
+    assert coordinator.update_interval.total_seconds() == 60
+
+
+async def test_start_failures(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Hub refusals and a lost session surface as Home Assistant errors."""
+    coordinator = await _setup(hass, mock_entry)
+    emulator.scan_start_result = "ErrorAutoChannelSelectionAlreadyInProgress"
+    with pytest.raises(HomeAssistantError) as busy:
+        await coordinator.async_start_channel_scan()
+    assert busy.value.translation_key == "channel_scan_running"
+    emulator.scan_start_result = "_ErrorUnknownAction"
+    with pytest.raises(HomeAssistantError) as unknown:
+        await coordinator.async_start_channel_scan()
+    assert unknown.value.translation_key == "not_supported"
+    emulator.scan_start_result = "_ErrorBoom"
+    with pytest.raises(HomeAssistantError) as failed:
+        await coordinator.async_start_channel_scan()
+    assert failed.value.translation_key == "start_failed"
+    emulator.scan_start_result = "_ErrorUnauthorized"
+    with pytest.raises(HomeAssistantError) as auth:
+        await coordinator.async_start_channel_scan()
+    assert auth.value.translation_key == "invalid_auth"
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert any(f["context"]["source"] == "reauth" for f in flows)
+
+
+async def test_start_not_supported(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """The coordinator refuses to start what the firmware does not offer."""
+    emulator.unknown_actions |= {
+        "http://linksys.com/jnap/nodes/setup/GetSelectedChannels",
+        "http://linksys.com/jnap/healthcheck/GetHealthCheckStatus",
+        "http://linksys.com/jnap/healthcheck/GetHealthCheckResults",
+    }
+    coordinator = await _setup(hass, mock_entry)
+    with pytest.raises(HomeAssistantError) as scan:
+        await coordinator.async_start_channel_scan()
+    assert scan.value.translation_key == "not_supported"
+    with pytest.raises(HomeAssistantError) as speed:
+        await coordinator.async_start_speed_test()
+    assert speed.value.translation_key == "not_supported"
+    assert emulator.scan_starts == 0
+    assert emulator.speed_starts == 0
+
+
+async def test_speed_start_failure(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A speed check start the firmware does not know reports not supported."""
+    coordinator = await _setup(hass, mock_entry)
+    emulator.unknown_actions.add("http://linksys.com/jnap/healthcheck/RunHealthCheck")
+    with pytest.raises(HomeAssistantError) as err:
+        await coordinator.async_start_speed_test()
+    assert err.value.translation_key == "not_supported"
+
+
+async def test_diagnostics_include_speed_summary(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Diagnostics carry the speed numbers without identifying data."""
+    from custom_components.ha_linksys_velop.diagnostics import (  # noqa: PLC0415
+        async_get_config_entry_diagnostics,
+    )
+
+    emulator.speed_starts = 1
+    emulator.finish_speed()
+    await _setup(hass, mock_entry)
+    data = await async_get_config_entry_diagnostics(hass, mock_entry)
+    assert data["channel_scan_running"] is False
+    assert data["speed_test"] == {
+        "running": False,
+        "last_exit_code": "Success",
+        "last_download_mbps": 92.0,
+        "last_upload_mbps": 95.0,
+        "last_latency_ms": 3.0,
+    }
+
+
+async def test_diagnostics_speed_unsupported(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Unsupported firmware reports no speed summary."""
+    from custom_components.ha_linksys_velop.diagnostics import (  # noqa: PLC0415
+        async_get_config_entry_diagnostics,
+    )
+
+    emulator.unknown_actions |= {
+        "http://linksys.com/jnap/healthcheck/GetHealthCheckStatus",
+        "http://linksys.com/jnap/healthcheck/GetHealthCheckResults",
+    }
+    await _setup(hass, mock_entry)
+    data = await async_get_config_entry_diagnostics(hass, mock_entry)
+    assert data["speed_test"] is None

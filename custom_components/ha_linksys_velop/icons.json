@@ -6,6 +6,12 @@
       },
       "node_connectivity": {
         "default": "mdi:router-wireless"
+      },
+      "channel_scan_running": {
+        "default": "mdi:radar"
+      },
+      "speed_test_running": {
+        "default": "mdi:speedometer"
       }
     },
     "sensor": {
@@ -41,6 +47,21 @@
       },
       "memory_load": {
         "default": "mdi:memory"
+      },
+      "speed_test_download": {
+        "default": "mdi:download-network"
+      },
+      "speed_test_upload": {
+        "default": "mdi:upload-network"
+      },
+      "speed_test_latency": {
+        "default": "mdi:timer-outline"
+      },
+      "speed_test_last_run": {
+        "default": "mdi:clock-check-outline"
+      },
+      "speed_test_result": {
+        "default": "mdi:check-network"
       }
     },
     "event": {
@@ -49,6 +70,14 @@
       },
       "client_events": {
         "default": "mdi:account-switch"
+      }
+    },
+    "button": {
+      "channel_scan": {
+        "default": "mdi:wifi-sync"
+      },
+      "speed_test": {
+        "default": "mdi:speedometer"
       }
     }
   },

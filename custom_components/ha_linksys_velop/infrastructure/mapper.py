@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..domain.models import (
@@ -13,6 +14,8 @@ from ..domain.models import (
     NetworkMode,
     Node,
     NodeRole,
+    SpeedTestResult,
+    SpeedTestState,
     SystemStats,
     WanStatus,
 )
@@ -311,3 +314,74 @@ def map_stats(output: Mapping[str, Any]) -> SystemStats:
         cpu_load=_num(output.get("CPULoad")),
         memory_load=_num(output.get("MemoryLoad")),
     )
+
+
+_KBPS_PER_MBPS = 1000
+_SPEED_PENDING_CODES = frozenset({"notavailable", "unavailable"})
+
+
+def map_channel_scan(output: Mapping[str, Any]) -> bool | None:
+    """Map nodes/setup/GetSelectedChannels to "is a channel scan running"."""
+    running = output.get("isRunning")
+    return running if isinstance(running, bool) else None
+
+
+def _timestamp(value: object) -> datetime | None:
+    text = _str(value)
+    if text is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _mbps(value: object) -> float | None:
+    kbps = _num(value)
+    return None if kbps is None else round(kbps / _KBPS_PER_MBPS, 2)
+
+
+def _speed_item(item: Mapping[str, Any]) -> tuple[SpeedTestResult, bool] | None:
+    """Map one health-check item; the flag is True while the test is running."""
+    body = item.get("speedTestResult")
+    if not isinstance(body, dict):
+        return None
+    code = _str(body.get("exitCode")) or "Unknown"
+    result_id = _num(body.get("resultID"))
+    latency = _num(body.get("latency", body.get("latencyMs")))
+    result = SpeedTestResult(
+        result_id=None if result_id is None else int(result_id),
+        timestamp=_timestamp(item.get("timestamp")),
+        exit_code=code,
+        download_mbps=_mbps(body.get("downloadBandwidth")),
+        upload_mbps=_mbps(body.get("uploadBandwidth")),
+        latency_ms=latency,
+        server_id=_str(body.get("serverID")),
+    )
+    return result, code.lower() in _SPEED_PENDING_CODES
+
+
+def map_speed_test(
+    status: Mapping[str, Any] | None, results: Mapping[str, Any] | None
+) -> SpeedTestState | None:
+    """Combine GetHealthCheckStatus and GetHealthCheckResults.
+
+    The hub reports a running test with an exit code of ``NotAvailable`` and
+    partly filled numbers. The newest item that is not pending is the latest
+    finished test. Returns None when neither answer was usable.
+    """
+    if status is None and results is None:
+        return None
+    running = False
+    if status is not None and (item := _speed_item(status)) is not None:
+        running = item[1]
+    latest: SpeedTestResult | None = None
+    for raw in _dicts((results or {}).get("healthCheckResults")):
+        mapped = _speed_item(raw)
+        if mapped is None or mapped[1]:
+            continue
+        candidate = mapped[0]
+        if latest is None or (candidate.result_id or 0) >= (latest.result_id or 0):
+            latest = candidate
+    return SpeedTestState(running=running, latest=latest)

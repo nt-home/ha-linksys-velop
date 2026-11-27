@@ -15,6 +15,7 @@ from custom_components.ha_linksys_velop.domain.errors import (
     InvalidAuthError,
     JnapResultError,
     NotPrimaryNodeError,
+    OperationInProgressError,
     UnknownActionError,
     UnsupportedDeviceError,
 )
@@ -230,7 +231,14 @@ async def test_fast_router(session: aiohttp.ClientSession, emulator: Emulator) -
         "devicelist/GetDevices",
         "nodes/diagnostics/GetBackhaulInfo",
         "router/GetWANStatus",
+        "nodes/setup/GetSelectedChannels",
+        "healthcheck/GetHealthCheckStatus",
+        "healthcheck/GetHealthCheckResults",
     ]
+    assert snap.channel_scan_running is False
+    assert snap.speed_test is not None
+    assert snap.speed_test.running is False
+    assert snap.speed_test.latest is None
 
 
 async def test_fast_bridge(session: aiohttp.ClientSession, emulator: Emulator) -> None:
@@ -356,18 +364,27 @@ async def test_slow_auth_failure(
 async def test_fast_tolerates_misc_failures() -> None:
     """Generic and not-primary failures are tolerated per action."""
     client, _ = fake(
-        transaction=[err("ErrorDeviceNotInMasterMode"), err("_ErrorBoom"), err("X")]
+        transaction=[
+            err("ErrorDeviceNotInMasterMode"),
+            err("_ErrorBoom"),
+            err("X"),
+            err("_ErrorUnknownAction"),
+            err("Y"),
+            err("Z"),
+        ]
     )
     snap = await client.async_fetch_fast(IDENTITY)
     assert snap.wan.mode is NetworkMode.UNKNOWN
     assert [n.role for n in snap.nodes] == [NodeRole.PRIMARY]
     assert snap.clients == ()
+    assert snap.channel_scan_running is None
+    assert snap.speed_test is None
 
 
 async def test_fast_auth_in_any_position_raises() -> None:
     """An auth failure in any slot is fatal."""
-    for slot in range(3):
-        responses = [ok(), ok(), ok()]
+    for slot in range(6):
+        responses = [ok(), ok(), ok(), ok(), ok(), ok()]
         responses[slot] = err("_ErrorUnauthorized")
         client, _ = fake(transaction=responses)
         with pytest.raises(InvalidAuthError):
@@ -503,3 +520,64 @@ async def test_reboot_auth_error_propagates(
 def test_module_constants() -> None:
     """Action names are built on the JNAP base."""
     assert f"{JNAP_BASE}core/Reboot2" == vc.ACTION_REBOOT_NODE
+
+
+# channel scan and speed check ------------------------------------------------
+
+
+async def test_start_channel_scan(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """Channel Finder starts with the auto channel selection action."""
+    client = client_for(session, emulator)
+    await client.async_start_channel_scan()
+    assert emulator.scan_starts == 1
+    snap = await client.async_fetch_fast(IDENTITY)
+    assert snap.channel_scan_running is True
+
+
+async def test_start_channel_scan_already_running(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """The hub's already-in-progress result maps to its own error."""
+    emulator.scan_start_result = "ErrorAutoChannelSelectionAlreadyInProgress"
+    with pytest.raises(OperationInProgressError):
+        await client_for(session, emulator).async_start_channel_scan()
+
+
+async def test_start_speed_test_and_read_results(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """A speed check runs, then its numbers arrive in Mbps."""
+    client = client_for(session, emulator)
+    await client.async_start_speed_test()
+    assert emulator.speed_starts == 1
+    running = (await client.async_fetch_fast(IDENTITY)).speed_test
+    assert running is not None
+    assert running.running is True
+    assert running.latest is None
+    emulator.finish_speed()
+    done = (await client.async_fetch_fast(IDENTITY)).speed_test
+    assert done is not None
+    assert done.running is False
+    assert done.latest is not None
+    assert done.latest.success
+    assert done.latest.download_mbps == 92.0
+    assert done.latest.upload_mbps == 95.0
+    assert done.latest.latency_ms == 3
+    assert done.latest.timestamp is not None
+
+
+async def test_fast_speed_test_unsupported(
+    session: aiohttp.ClientSession, emulator: Emulator
+) -> None:
+    """Firmware without the actions leaves the features unknown."""
+    emulator.unknown_actions |= {
+        f"{JNAP_BASE}nodes/setup/GetSelectedChannels",
+        f"{JNAP_BASE}healthcheck/GetHealthCheckStatus",
+        f"{JNAP_BASE}healthcheck/GetHealthCheckResults",
+    }
+    snap = await client_for(session, emulator).async_fetch_fast(IDENTITY)
+    assert snap.channel_scan_running is None
+    assert snap.speed_test is None
+    assert len(snap.nodes) == 3

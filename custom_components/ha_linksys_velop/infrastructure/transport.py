@@ -17,6 +17,7 @@ from ..domain.errors import (
     InvalidAuthError,
     JnapResultError,
     NotPrimaryNodeError,
+    OperationInProgressError,
     UnknownActionError,
     UnsupportedDeviceError,
 )
@@ -37,6 +38,7 @@ USERNAME = "admin"
 RESULT_OK = "OK"
 _AUTH_RESULTS = frozenset({"_ErrorUnauthorized", "ErrorInvalidAdminPassword"})
 _LOCK_RESULTS = frozenset({"ErrorAdminAccountLocked", "ErrorPasswordCheckDelayed"})
+_IN_PROGRESS_RESULT = "ErrorAutoChannelSelectionAlreadyInProgress"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,8 @@ def raise_for_result(result: str) -> None:
         raise UnknownActionError(result)
     if result == "ErrorDeviceNotInMasterMode":
         raise NotPrimaryNodeError
+    if result == _IN_PROGRESS_RESULT:
+        raise OperationInProgressError(result)
     raise JnapResultError(result)
 
 

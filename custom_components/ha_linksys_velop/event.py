@@ -42,7 +42,7 @@ class VelopEventEntity(VelopEntity, EventEntity):
     def _handle(self, event: VelopEvent) -> None:
         if event.type.value not in self._attr_event_types:
             return
-        attributes: dict[str, str] = {}
+        attributes: dict[str, float | int | str] = {}
         if event.node_name:
             attributes["node_name"] = event.node_name
         if event.node_serial:
@@ -53,6 +53,8 @@ class VelopEventEntity(VelopEntity, EventEntity):
             attributes["client_name"] = event.client_name
         if event.client_mac:
             attributes["client_mac"] = event.client_mac
+        if event.data:
+            attributes.update(event.data)
         self._trigger_event(event.type.value, attributes)
         self.async_write_ha_state()
 

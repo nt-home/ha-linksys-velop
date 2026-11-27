@@ -4,6 +4,27 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-27
+
+### Added
+
+- **Scan channels** button on the hub that starts the router's Channel Finder over JNAP (`nodes/setup/StartAutoChannelSelection`)
+- **Start speed check** button on the hub that runs the router's built-in speed check over JNAP (`healthcheck/RunHealthCheck`)
+- **Channel scan running** and **Speed check running** diagnostic binary sensors on the hub
+- Diagnostic sensors for the last speed check: download and upload (Mbps), ping (ms), last run time, and a disabled-by-default result (exit code)
+- Hub events `channel_scan_started`, `channel_scan_completed`, `speed_test_started`, `speed_test_completed` and `speed_test_failed` on the **Events** entity and the `ha_linksys_velop_event` bus event; completed speed checks carry `download_mbps`, `upload_mbps` and `latency_ms`
+- Detection of runs started from the Linksys app, with the status refresh speeding up to 5 s while a scan or speed check runs
+- Speed check and channel scan summary in the redacted diagnostics download
+- Entities and buttons appear only when the firmware answers the matching JNAP actions
+- Emulator support and tests for the new actions, mapping, events, buttons, sensors, failure paths and unsupported firmware
+
+### Changed
+
+- The fast refresh transaction also reads channel scan status, speed check status and recent speed check results
+- Map the hub's already-running channel scan result to its own error, shown as a Home Assistant error when a button is pressed during a run
+- Bump the integration version to 0.4.0
+- Document the new controls, entities, events and automation examples in the README
+
 ## [0.3.0] - 2026-11-26
 
 ### Added
@@ -51,7 +72,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `reboot_node` and `refresh_now` actions, redacted diagnostics, repair issue for locked admin accounts.
 - Emulated JNAP router test harness (router mode, bridge mode, self-signed HTTPS, failure modes).
 
-[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nt-home/ha-linksys-velop/releases/tag/v0.1.0

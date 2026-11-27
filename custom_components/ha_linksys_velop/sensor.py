@@ -16,6 +16,7 @@ from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfDataRate,
+    UnitOfTime,
 )
 
 from .domain.models import NetworkMode, NodeRole
@@ -23,6 +24,7 @@ from .entity import VelopEntity, async_add_node_entities
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
 
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity import Entity
@@ -39,7 +41,7 @@ PARALLEL_UPDATES = 0
 class VelopSensorDescription(SensorEntityDescription):
     """Sensor description with a value function over node and snapshot."""
 
-    value_fn: Callable[[Node, HubSnapshot], StateType]
+    value_fn: Callable[[Node, HubSnapshot], StateType | datetime]
     exists_fn: Callable[[Node, HubSnapshot], bool] = lambda _n, _s: True
 
 
@@ -113,6 +115,70 @@ HUB_SENSORS: tuple[VelopSensorDescription, ...] = (
     ),
 )
 
+
+def _speed_attr(name: str) -> Callable[[Node, HubSnapshot], StateType | datetime]:
+    def _value(_n: Node, snap: HubSnapshot) -> StateType | datetime:
+        latest = snap.speed_test.latest if snap.speed_test else None
+        return getattr(latest, name, None)
+
+    return _value
+
+
+def _has_speed_test(_n: Node, snap: HubSnapshot) -> bool:
+    return snap.speed_test is not None
+
+
+SPEED_TEST_SENSORS: tuple[VelopSensorDescription, ...] = (
+    VelopSensorDescription(
+        key="speed_test_download",
+        translation_key="speed_test_download",
+        device_class=SensorDeviceClass.DATA_RATE,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=1,
+        value_fn=_speed_attr("download_mbps"),
+        exists_fn=_has_speed_test,
+    ),
+    VelopSensorDescription(
+        key="speed_test_upload",
+        translation_key="speed_test_upload",
+        device_class=SensorDeviceClass.DATA_RATE,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=1,
+        value_fn=_speed_attr("upload_mbps"),
+        exists_fn=_has_speed_test,
+    ),
+    VelopSensorDescription(
+        key="speed_test_latency",
+        translation_key="speed_test_latency",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_speed_attr("latency_ms"),
+        exists_fn=_has_speed_test,
+    ),
+    VelopSensorDescription(
+        key="speed_test_last_run",
+        translation_key="speed_test_last_run",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_speed_attr("timestamp"),
+        exists_fn=_has_speed_test,
+    ),
+    VelopSensorDescription(
+        key="speed_test_result",
+        translation_key="speed_test_result",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_speed_attr("exit_code"),
+        exists_fn=_has_speed_test,
+    ),
+)
+
 NODE_SENSORS: tuple[VelopSensorDescription, ...] = (
     VelopSensorDescription(
         key="client_count",
@@ -180,7 +246,7 @@ class VelopSensor(VelopEntity, SensorEntity):
         self.entity_description = description
 
     @property
-    def native_value(self) -> StateType:
+    def native_value(self) -> StateType | datetime:
         """Return the sensor value, or None when unknown."""
         node = self.node
         if node is None:
@@ -191,7 +257,7 @@ class VelopSensor(VelopEntity, SensorEntity):
 def _factory(coordinator: VelopCoordinator, node: Node) -> list[Entity]:
     descriptions = list(NODE_SENSORS)
     if node.role is NodeRole.PRIMARY:
-        descriptions = [*HUB_SENSORS, *descriptions]
+        descriptions = [*HUB_SENSORS, *SPEED_TEST_SENSORS, *descriptions]
     snap = coordinator.data
     return [
         VelopSensor(coordinator, node.serial, d)

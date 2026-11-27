@@ -25,3 +25,9 @@ class HubPort(Protocol):
 
     async def async_reboot(self, node: Node) -> None:
         """Reboot the given node (the primary node reboots the whole hub)."""
+
+    async def async_start_channel_scan(self) -> None:
+        """Start the hub's Channel Finder scan (auto channel selection)."""
+
+    async def async_start_speed_test(self) -> None:
+        """Start a speed check from the hub to the internet."""

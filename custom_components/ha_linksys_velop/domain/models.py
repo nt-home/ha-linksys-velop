@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -107,13 +108,48 @@ class SystemStats:
     memory_load: float | None = None
 
 
+SPEED_TEST_SUCCESS = "Success"
+
+
+@dataclass(frozen=True, slots=True)
+class SpeedTestResult:
+    """One finished speed check as reported by the hub."""
+
+    result_id: int | None
+    timestamp: datetime | None
+    exit_code: str
+    download_mbps: float | None = None
+    upload_mbps: float | None = None
+    latency_ms: float | None = None
+    server_id: str | None = None
+
+    @property
+    def success(self) -> bool:
+        """Return True when the hub finished the test with usable numbers."""
+        return self.exit_code == SPEED_TEST_SUCCESS
+
+
+@dataclass(frozen=True, slots=True)
+class SpeedTestState:
+    """Speed check activity: whether one is running and the last finished one."""
+
+    running: bool
+    latest: SpeedTestResult | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class FastSnapshot:
-    """Data refreshed on the fast interval."""
+    """Data refreshed on the fast interval.
+
+    ``channel_scan_running`` and ``speed_test`` are None when the firmware does
+    not offer the feature.
+    """
 
     wan: WanStatus
     nodes: tuple[Node, ...]
     clients: tuple[Client, ...] = ()
+    channel_scan_running: bool | None = None
+    speed_test: SpeedTestState | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +172,8 @@ class HubSnapshot:
     clients: tuple[Client, ...]
     firmware: Mapping[str, FirmwareStatus]
     stats: SystemStats
+    channel_scan_running: bool | None = None
+    speed_test: SpeedTestState | None = None
 
     @property
     def mode(self) -> NetworkMode:

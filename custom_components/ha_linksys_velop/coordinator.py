@@ -17,6 +17,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .application.events import EventDetector, EventType, VelopEvent
 from .const import (
+    ACTIVE_GRACE_SECONDS,
+    ACTIVE_POLL_SECONDS,
     DEFAULT_FAST_INTERVAL,
     DEFAULT_SLOW_INTERVAL,
     DOMAIN,
@@ -35,12 +37,14 @@ from .domain.errors import (
     AccountLockedError,
     InvalidAuthError,
     NotPrimaryNodeError,
+    OperationInProgressError,
+    UnknownActionError,
     VelopError,
 )
 from .domain.models import HubIdentity, HubSnapshot, Node, NodeRole, SlowSnapshot
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from homeassistant.core import HomeAssistant
 
@@ -89,6 +93,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         self._event_listeners: list[Callable[[VelopEvent], None]] = []
         self._reboot_at: dict[str, float] = {}
         self._mode_reload = False
+        self._active_until = 0.0
 
     @callback
     def async_subscribe_events(
@@ -134,7 +139,6 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             raise UpdateFailed(
                 translation_domain=DOMAIN, translation_key="cannot_connect"
             ) from exc
-        self._register_success()
         ir.async_delete_issue(
             self.hass, DOMAIN, f"{ISSUE_ACCOUNT_LOCKED}_{self.identity.serial}"
         )
@@ -146,9 +150,12 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             clients=fast.clients,
             firmware=slow.firmware,
             stats=slow.stats,
+            channel_scan_running=fast.channel_scan_running,
+            speed_test=fast.speed_test,
         )
         excluded = {n.serial for n in fast.nodes} - {n.serial for n in snapshot.nodes}
         self._publish(snapshot, excluded)
+        self._register_success(snapshot)
         return snapshot
 
     async def _async_slow(self) -> SlowSnapshot:
@@ -171,11 +178,19 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             n for n in nodes if n.role is NodeRole.PRIMARY or n.serial in allowed
         )
 
-    def _register_success(self) -> None:
+    def _register_success(self, snapshot: HubSnapshot) -> None:
         if self._failures >= 3:  # noqa: PLR2004
             _LOGGER.info("Connection to the hub recovered")
         self._failures = 0
-        self.update_interval = timedelta(seconds=self._fast)
+        # Poll quickly while a scan or speed check runs so its end is seen soon.
+        speed = snapshot.speed_test
+        busy = bool(snapshot.channel_scan_running) or bool(speed and speed.running)
+        if busy or time.monotonic() < self._active_until:
+            self.update_interval = timedelta(
+                seconds=min(self._fast, ACTIVE_POLL_SECONDS)
+            )
+        else:
+            self.update_interval = timedelta(seconds=self._fast)
 
     def _register_failure(self) -> None:
         self._failures += 1
@@ -230,7 +245,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
                 registry.async_update_device(stale.id, remove_config_entry_id=entry_id)
 
     def _fire(self, event: VelopEvent) -> None:
-        payload: dict[str, str] = {"type": event.type.value}
+        payload: dict[str, float | int | str] = {"type": event.type.value}
         if event.node_name:
             payload["node_name"] = event.node_name
         if event.node_serial:
@@ -241,6 +256,8 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             payload["client_name"] = event.client_name
         if event.client_mac:
             payload["client_mac"] = event.client_mac
+        if event.data:
+            payload.update(event.data)
         # Client events belong to the node the client attached to or left.
         owner = (
             event.node_serial
@@ -284,3 +301,53 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="reboot_failed"
             ) from exc
+
+    async def async_start_channel_scan(self) -> None:
+        """Start Channel Finder unless the hub is already scanning."""
+        if self.data.channel_scan_running is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_supported"
+            )
+        if self.data.channel_scan_running:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="channel_scan_running"
+            )
+        await self._async_start(self.client.async_start_channel_scan)
+
+    async def async_start_speed_test(self) -> None:
+        """Start a manual speed check unless one is already running."""
+        state = self.data.speed_test
+        if state is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_supported"
+            )
+        if state.running:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="speed_test_running"
+            )
+        await self._async_start(self.client.async_start_speed_test)
+
+    async def _async_start(self, start: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await start()
+        except InvalidAuthError as exc:
+            self.config_entry.async_start_reauth(self.hass)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="invalid_auth"
+            ) from exc
+        except OperationInProgressError as exc:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="channel_scan_running"
+            ) from exc
+        except UnknownActionError as exc:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_supported"
+            ) from exc
+        except VelopError as exc:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="start_failed"
+            ) from exc
+        # The hub may take a moment to report the run: keep polling briefly.
+        self._active_until = time.monotonic() + ACTIVE_GRACE_SECONDS
+        self.update_interval = timedelta(seconds=min(self._fast, ACTIVE_POLL_SECONDS))
+        await self.async_request_refresh()
