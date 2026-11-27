@@ -4,6 +4,26 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-27
+
+### Added
+
+- Separate **Network IPv4 address** and **Network IPv6 address** diagnostic sensors per node, replacing the combined IP address sensor; the IPv6 sensor exists only when the router reports an address
+- Removal of the old combined IP address sensor from the entity registry when the integration loads
+- Tests for parent node resolution, IPv6 mapping, firmware picture, sentence-case values, legacy sensor removal and entity name order
+
+### Changed
+
+- **Breaking:** Rename entities so the Home Assistant device page, which sorts by name, lists them as firmware first, then operating information, then addresses and results, with controls last: **Internet status**, **Mesh operating mode**, **Mesh nodes**, **Mesh CPU load**, **Mesh memory load**, **Mesh channel scan running**, **Mesh backhaul type/speed/signal**, **Mesh parent node**, **Network clients**, **Network events**, **Network client activity**, **Find channels** and **Check speed**; existing entity IDs are kept
+- Show status values in sentence case (**Connected**, **Wired**, **Wireless**, **Success**) instead of the router's lowercase words
+- Show the firmware entity with the standard icon instead of the integration's brand picture
+- Bump the integration version to 0.5.0
+- Update the README for the new entity names, address sensors and ordering
+
+### Fixed
+
+- Show the **Mesh parent node** of child nodes instead of Unknown: the router leaves the parent device empty, so the parent is now taken from the backhaul uplink address and falls back to the primary node for online children
+
 ## [0.4.0] - 2026-11-27
 
 ### Added

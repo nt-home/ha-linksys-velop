@@ -25,17 +25,19 @@ def node_device(
     connected: bool = True,
     parent: str = "",
     ip: str = "192.0.2.1",
+    ipv6: str = "",
 ) -> dict[str, Any]:
     """Build a GetDevices node entry."""
+    connection: dict[str, Any] = {"ipAddress": ip, "parentDeviceID": parent}
+    if ipv6:
+        connection["ipv6Address"] = ipv6
     return {
         "deviceID": device_id,
         "friendlyName": name,
         "nodeType": node_type,
         "isAuthority": node_type == "Master",
         "knownInterfaces": [{"macAddress": f"00:11:22:33:44:{serial[-2:]}"}],
-        "connections": [{"ipAddress": ip, "parentDeviceID": parent}]
-        if connected
-        else [],
+        "connections": [connection] if connected else [],
         "properties": [{"name": "userDeviceName", "value": name}],
         "model": {"modelNumber": "MX2000", "hardwareVersion": "1"},
         "unit": {"serialNumber": serial, "firmwareVersion": "1.1.7.210469"},

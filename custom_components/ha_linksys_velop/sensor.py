@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -18,7 +19,9 @@ from homeassistant.const import (
     UnitOfDataRate,
     UnitOfTime,
 )
+from homeassistant.helpers import entity_registry as er
 
+from .const import DOMAIN
 from .domain.models import NetworkMode, NodeRole
 from .entity import VelopEntity, async_add_node_entities
 
@@ -45,6 +48,17 @@ class VelopSensorDescription(SensorEntityDescription):
     exists_fn: Callable[[Node, HubSnapshot], bool] = lambda _n, _s: True
 
 
+_WORD_BREAK = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|[_\-\s]+")
+
+
+def _sentence(value: str | None) -> str | None:
+    """Return a router status word in sentence case (e.g. Not available)."""
+    if not value:
+        return None
+    text = " ".join(part for part in _WORD_BREAK.split(value) if part).lower()
+    return text[:1].upper() + text[1:]
+
+
 def _parent_name(node: Node, snap: HubSnapshot) -> str | None:
     for other in snap.nodes:
         if other.device_id == node.parent_device_id:
@@ -56,7 +70,7 @@ HUB_SENSORS: tuple[VelopSensorDescription, ...] = (
     VelopSensorDescription(
         key="wan_status",
         translation_key="wan_status",
-        value_fn=lambda _n, s: s.wan.status,
+        value_fn=lambda _n, s: _sentence(s.wan.status),
     ),
     VelopSensorDescription(
         key="wan_ip",
@@ -124,6 +138,16 @@ def _speed_attr(name: str) -> Callable[[Node, HubSnapshot], StateType | datetime
     return _value
 
 
+def _speed_text(name: str) -> Callable[[Node, HubSnapshot], StateType | datetime]:
+    value = _speed_attr(name)
+
+    def _text(node: Node, snap: HubSnapshot) -> StateType | datetime:
+        raw = value(node, snap)
+        return _sentence(raw) if isinstance(raw, str) else raw
+
+    return _text
+
+
 def _has_speed_test(_n: Node, snap: HubSnapshot) -> bool:
     return snap.speed_test is not None
 
@@ -174,7 +198,7 @@ SPEED_TEST_SENSORS: tuple[VelopSensorDescription, ...] = (
         translation_key="speed_test_result",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=_speed_attr("exit_code"),
+        value_fn=_speed_text("exit_code"),
         exists_fn=_has_speed_test,
     ),
 )
@@ -187,16 +211,19 @@ NODE_SENSORS: tuple[VelopSensorDescription, ...] = (
         value_fn=lambda n, _s: n.client_count,
     ),
     VelopSensorDescription(
-        key="ip_address",
-        translation_key="ip_address",
+        key="parent_node",
+        translation_key="parent_node",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda n, _s: n.ip_address,
+        value_fn=_parent_name,
+        exists_fn=lambda n, _s: n.role is NodeRole.CHILD,
     ),
     VelopSensorDescription(
         key="backhaul_type",
         translation_key="backhaul_type",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda n, _s: n.backhaul.connection_type if n.backhaul else None,
+        value_fn=lambda n, _s: (
+            _sentence(n.backhaul.connection_type) if n.backhaul else None
+        ),
         exists_fn=lambda n, _s: n.role is NodeRole.CHILD,
     ),
     VelopSensorDescription(
@@ -221,11 +248,17 @@ NODE_SENSORS: tuple[VelopSensorDescription, ...] = (
         exists_fn=lambda n, _s: n.role is NodeRole.CHILD,
     ),
     VelopSensorDescription(
-        key="parent_node",
-        translation_key="parent_node",
+        key="ipv4_address",
+        translation_key="ipv4_address",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=_parent_name,
-        exists_fn=lambda n, _s: n.role is NodeRole.CHILD,
+        value_fn=lambda n, _s: n.ip_address,
+    ),
+    VelopSensorDescription(
+        key="ipv6_address",
+        translation_key="ipv6_address",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda n, _s: n.ipv6_address,
+        exists_fn=lambda n, _s: n.ipv6_address is not None,
     ),
 )
 
@@ -254,7 +287,18 @@ class VelopSensor(VelopEntity, SensorEntity):
         return self.entity_description.value_fn(node, self.snapshot)
 
 
+def _remove_legacy_entities(coordinator: VelopCoordinator, node: Node) -> None:
+    """Drop the combined IP address sensor that the IPv4 and IPv6 sensors replace."""
+    registry = er.async_get(coordinator.hass)
+    entity_id = registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{node.serial}_ip_address"
+    )
+    if entity_id is not None:
+        registry.async_remove(entity_id)
+
+
 def _factory(coordinator: VelopCoordinator, node: Node) -> list[Entity]:
+    _remove_legacy_entities(coordinator, node)
     descriptions = list(NODE_SENSORS)
     if node.role is NodeRole.PRIMARY:
         descriptions = [*HUB_SENSORS, *SPEED_TEST_SENSORS, *descriptions]

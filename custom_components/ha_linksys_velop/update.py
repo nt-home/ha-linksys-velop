@@ -29,6 +29,11 @@ class VelopFirmwareUpdate(VelopEntity, UpdateEntity):
         super().__init__(coordinator, serial, "firmware")
 
     @property
+    def entity_picture(self) -> str | None:
+        """Show the standard icon like every other entity, not the brand picture."""
+        return None
+
+    @property
     def installed_version(self) -> str | None:
         """Return the installed firmware version."""
         node = self.node

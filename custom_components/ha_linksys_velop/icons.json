@@ -62,6 +62,15 @@
       },
       "speed_test_result": {
         "default": "mdi:check-network"
+      },
+      "ipv4_address": {
+        "default": "mdi:ip-network"
+      },
+      "ipv6_address": {
+        "default": "mdi:ip-network-outline"
+      },
+      "firmware_version": {
+        "default": "mdi:tag-text-outline"
       }
     },
     "event": {

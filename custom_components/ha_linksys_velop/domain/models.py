@@ -74,6 +74,7 @@ class Node:
     hardware: str | None = None
     mac: str | None = None
     ip_address: str | None = None
+    ipv6_address: str | None = None
     parent_device_id: str | None = None
     location: str | None = None
     client_count: int | None = None

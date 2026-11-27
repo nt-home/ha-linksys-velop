@@ -19,10 +19,12 @@ from custom_components.ha_linksys_velop.const import (
     OPT_TRACKED_CLIENTS,
 )
 from custom_components.ha_linksys_velop.coordinator import VelopCoordinator
+from custom_components.ha_linksys_velop.sensor import _sentence
 from tests.emulator.server import (
     PRIMARY_SERIAL,
     Emulator,
     client_device,
+    node_device,
     three_node_mesh,
 )
 
@@ -55,16 +57,16 @@ async def test_router_mode_entities(
     """Hub and node entities reflect the emulated mesh."""
     await _setup(hass, mock_entry)
     assert hass.states.get("binary_sensor.living_room_internet").state == "on"
-    assert hass.states.get("sensor.living_room_wan_status").state == "connected"
-    assert hass.states.get("sensor.living_room_operating_mode").state == "router"
-    assert hass.states.get("sensor.living_room_connected_clients").state == "3"
-    assert hass.states.get("sensor.bedroom_backhaul_type").state == "wireless"
-    assert hass.states.get("sensor.bedroom_backhaul_speed").state == "866.0"
-    assert hass.states.get("sensor.bedroom_parent_node").state == "Living Room"
+    assert hass.states.get("sensor.living_room_internet_status").state == "Connected"
+    assert hass.states.get("sensor.living_room_mesh_operating_mode").state == "router"
+    assert hass.states.get("sensor.living_room_network_clients").state == "3"
+    assert hass.states.get("sensor.bedroom_mesh_backhaul_type").state == "Wireless"
+    assert hass.states.get("sensor.bedroom_mesh_backhaul_speed").state == "866.0"
+    assert hass.states.get("sensor.bedroom_mesh_parent_node").state == "Living Room"
     assert hass.states.get("binary_sensor.bedroom_connectivity").state == "on"
     assert hass.states.get("update.bedroom_firmware").state == "off"
     assert hass.states.get("button.office_reboot") is not None
-    assert hass.states.get("event.living_room_events") is not None
+    assert hass.states.get("event.living_room_network_events") is not None
 
 
 async def test_clients_not_exposed_by_default(
@@ -121,7 +123,7 @@ async def test_bridge_mode_skips_router_entities(
     """Bridge mode keeps nodes but never creates client entities."""
     emulator.wan_type = "Bridge"
     await _setup(hass, mock_entry)
-    assert hass.states.get("sensor.living_room_operating_mode").state == "bridge"
+    assert hass.states.get("sensor.living_room_mesh_operating_mode").state == "bridge"
     # No hub-wide total in bridge mode, but each node still counts its clients.
     registry = er.async_get(hass)
     assert (
@@ -134,8 +136,8 @@ async def test_bridge_mode_skips_router_entities(
         registry.async_get_entity_id("sensor", DOMAIN, f"{PRIMARY_SERIAL}_client_count")
         is not None
     )
-    assert hass.states.get("sensor.bedroom_connected_clients").state == "0"
-    assert hass.states.get("sensor.bedroom_backhaul_type") is not None
+    assert hass.states.get("sensor.bedroom_network_clients").state == "0"
+    assert hass.states.get("sensor.bedroom_mesh_backhaul_type") is not None
     assert not hass.states.async_entity_ids("device_tracker")
 
 
@@ -153,7 +155,7 @@ async def test_wan_events_debounced(
     assert [e.data["type"] for e in events] == ["wan_disconnected"]
     assert events[0].data["device_id"]
     assert hass.states.get("binary_sensor.living_room_internet").state == "off"
-    entity_state = hass.states.get("event.living_room_events")
+    entity_state = hass.states.get("event.living_room_network_events")
     assert entity_state.attributes["event_type"] == "wan_disconnected"
     emulator.wan_status = "Connected"
     await _refresh(hass, coordinator, 2)
@@ -225,7 +227,7 @@ async def test_mode_change_reloads_once(
     await hass.async_block_till_done()
     assert [e.data["type"] for e in events] == ["mode_changed"]
     assert mock_entry.state is ConfigEntryState.LOADED
-    assert hass.states.get("sensor.living_room_connected_clients") is None
+    assert hass.states.get("sensor.living_room_network_clients") is None
 
 
 async def test_reboot_button_and_cooldown(
@@ -304,12 +306,12 @@ async def test_unreachable_marks_unavailable_and_recovers(
     base = coordinator.update_interval
     emulator.status_override = 500
     await _refresh(hass, coordinator, 3)
-    assert hass.states.get("sensor.living_room_wan_status").state == "unavailable"
+    assert hass.states.get("sensor.living_room_internet_status").state == "unavailable"
     assert coordinator.update_interval > base
     assert coordinator.update_interval.total_seconds() <= 330
     emulator.status_override = None
     await _refresh(hass, coordinator)
-    assert hass.states.get("sensor.living_room_wan_status").state == "connected"
+    assert hass.states.get("sensor.living_room_internet_status").state == "Connected"
     assert coordinator.update_interval == base
 
 
@@ -503,7 +505,7 @@ async def test_vanished_node_entities_unavailable(
     coordinator = await _setup(hass, mock_entry)
     emulator.devices = [d for d in emulator.devices if d["deviceID"] != "node-3"]
     await _refresh(hass, coordinator)
-    assert hass.states.get("sensor.office_ip_address").state == "unavailable"
+    assert hass.states.get("sensor.office_network_ipv4_address").state == "unavailable"
     assert hass.states.get("update.office_firmware").state == "unavailable"
 
 
@@ -559,8 +561,8 @@ async def test_client_events_off_by_default(
     coordinator = await _setup(hass, mock_entry)
     emulator.devices.append(client_device(9, "node-3"))
     await _refresh(hass, coordinator, 3)
-    assert hass.states.get("event.office_client_activity") is None
-    assert hass.states.get("event.living_room_client_activity") is None
+    assert hass.states.get("event.office_network_client_activity") is None
+    assert hass.states.get("event.living_room_network_client_activity") is None
     assert events == []
 
 
@@ -572,7 +574,7 @@ async def test_client_join_leave_events_per_node(
     events = _capture(hass)
     coordinator = await _setup(hass, mock_entry)
     for name in ("living_room", "bedroom", "office"):
-        assert hass.states.get(f"event.{name}_client_activity") is not None
+        assert hass.states.get(f"event.{name}_network_client_activity") is not None
     assert events == []
 
     emulator.devices.append(client_device(9, "node-3"))
@@ -590,15 +592,20 @@ async def test_client_join_leave_events_per_node(
         (DOMAIN, "12K10M33333333"), mock_entry.entry_id
     )
     assert data["device_id"] == office.id
-    office_state = hass.states.get("event.office_client_activity")
+    office_state = hass.states.get("event.office_network_client_activity")
     assert office_state.attributes["event_type"] == "client_joined"
     assert office_state.attributes["client_name"] == "client-9"
     assert (
-        hass.states.get("event.bedroom_client_activity").attributes["event_type"]
+        hass.states.get("event.bedroom_network_client_activity").attributes[
+            "event_type"
+        ]
         is None
     )
     # The hub events entity never receives client events.
-    assert hass.states.get("event.living_room_events").attributes["event_type"] is None
+    assert (
+        hass.states.get("event.living_room_network_events").attributes["event_type"]
+        is None
+    )
 
     emulator.devices[-1]["connections"][0]["parentDeviceID"] = "node-2"
     await _refresh(hass, coordinator, 2)
@@ -607,7 +614,9 @@ async def test_client_join_leave_events_per_node(
         ("client_joined", "Bedroom"),
     ]
     assert (
-        hass.states.get("event.bedroom_client_activity").attributes["event_type"]
+        hass.states.get("event.bedroom_network_client_activity").attributes[
+            "event_type"
+        ]
         == "client_joined"
     )
 
@@ -627,12 +636,12 @@ async def test_client_events_removed_when_option_off(
     _enable_client_events(hass, mock_entry)
     await _setup(hass, mock_entry)
     registry = er.async_get(hass)
-    assert registry.async_get("event.office_client_activity") is not None
+    assert registry.async_get("event.office_network_client_activity") is not None
     hass.config_entries.async_update_entry(mock_entry, options={})
     await hass.config_entries.async_reload(mock_entry.entry_id)
     await hass.async_block_till_done()
-    assert registry.async_get("event.office_client_activity") is None
-    assert registry.async_get("event.living_room_events") is not None
+    assert registry.async_get("event.office_network_client_activity") is None
+    assert registry.async_get("event.living_room_network_events") is not None
 
 
 async def test_client_events_not_created_in_bridge_mode(
@@ -642,8 +651,8 @@ async def test_client_events_not_created_in_bridge_mode(
     emulator.wan_type = "Bridge"
     _enable_client_events(hass, mock_entry)
     await _setup(hass, mock_entry)
-    assert hass.states.get("event.office_client_activity") is None
-    assert hass.states.get("event.living_room_events") is not None
+    assert hass.states.get("event.office_network_client_activity") is None
+    assert hass.states.get("event.living_room_network_events") is not None
 
 
 async def test_node_client_count_follows_refresh_interval(
@@ -654,13 +663,13 @@ async def test_node_client_count_follows_refresh_interval(
     hass.config_entries.async_update_entry(mock_entry, options={OPT_FAST_INTERVAL: 45})
     coordinator = await _setup(hass, mock_entry)
     assert coordinator.update_interval.total_seconds() == 45
-    assert hass.states.get("sensor.bedroom_connected_clients").state == "2"
-    assert hass.states.get("sensor.office_connected_clients").state == "0"
+    assert hass.states.get("sensor.bedroom_network_clients").state == "2"
+    assert hass.states.get("sensor.office_network_clients").state == "0"
     emulator.devices.append(client_device(9, "node-3"))
     emulator.devices[3]["connections"] = []  # client-1 (on node-2) disconnects
     await _refresh(hass, coordinator)
-    assert hass.states.get("sensor.bedroom_connected_clients").state == "1"
-    assert hass.states.get("sensor.office_connected_clients").state == "1"
+    assert hass.states.get("sensor.bedroom_network_clients").state == "1"
+    assert hass.states.get("sensor.office_network_clients").state == "1"
 
 
 async def test_bridge_mode_node_client_count_refreshes(
@@ -670,12 +679,12 @@ async def test_bridge_mode_node_client_count_refreshes(
     emulator.wan_type = "Bridge"
     emulator.wireless = [{"deviceID": "node-2", "connections": [{}, {}, {}]}]
     coordinator = await _setup(hass, mock_entry)
-    assert hass.states.get("sensor.bedroom_connected_clients").state == "3"
-    assert hass.states.get("sensor.office_connected_clients").state == "0"
+    assert hass.states.get("sensor.bedroom_network_clients").state == "3"
+    assert hass.states.get("sensor.office_network_clients").state == "0"
     emulator.wireless = [{"deviceID": "node-3", "connections": [{}]}]
     await _refresh(hass, coordinator)
-    assert hass.states.get("sensor.bedroom_connected_clients").state == "0"
-    assert hass.states.get("sensor.office_connected_clients").state == "1"
+    assert hass.states.get("sensor.bedroom_network_clients").state == "0"
+    assert hass.states.get("sensor.office_network_clients").state == "1"
 
 
 # channel scan and speed check -------------------------------------------------
@@ -687,9 +696,9 @@ async def test_activity_entities_created(
     """The primary node gets the buttons, running sensors and result sensors."""
     await _setup(hass, mock_entry)
     for entity_id in (
-        "button.living_room_scan_channels",
-        "button.living_room_start_speed_check",
-        "binary_sensor.living_room_channel_scan_running",
+        "button.living_room_find_channels",
+        "button.living_room_check_speed",
+        "binary_sensor.living_room_mesh_channel_scan_running",
         "binary_sensor.living_room_speed_check_running",
         "sensor.living_room_speed_check_download",
         "sensor.living_room_speed_check_upload",
@@ -697,8 +706,8 @@ async def test_activity_entities_created(
         "sensor.living_room_speed_check_last_run",
     ):
         assert hass.states.get(entity_id) is not None, entity_id
-    assert hass.states.get("button.bedroom_scan_channels") is None
-    assert hass.states.get("button.bedroom_start_speed_check") is None
+    assert hass.states.get("button.bedroom_find_channels") is None
+    assert hass.states.get("button.bedroom_check_speed") is None
     assert hass.states.get("sensor.living_room_speed_check_download").state == "unknown"
     registry = er.async_get(hass)
     entry = registry.async_get("sensor.living_room_speed_check_download")
@@ -722,9 +731,9 @@ async def test_activity_entities_absent_when_unsupported(
     await _setup(hass, mock_entry)
     assert hass.states.get("button.living_room_reboot") is not None
     for entity_id in (
-        "button.living_room_scan_channels",
-        "button.living_room_start_speed_check",
-        "binary_sensor.living_room_channel_scan_running",
+        "button.living_room_find_channels",
+        "button.living_room_check_speed",
+        "binary_sensor.living_room_mesh_channel_scan_running",
         "binary_sensor.living_room_speed_check_running",
         "sensor.living_room_speed_check_download",
     ):
@@ -740,7 +749,7 @@ async def test_speed_check_button_events_and_sensors(
     await hass.services.async_call(
         "button",
         "press",
-        {"entity_id": "button.living_room_start_speed_check"},
+        {"entity_id": "button.living_room_check_speed"},
         blocking=True,
     )
     await hass.async_block_till_done()
@@ -756,7 +765,7 @@ async def test_speed_check_button_events_and_sensors(
         await hass.services.async_call(
             "button",
             "press",
-            {"entity_id": "button.living_room_start_speed_check"},
+            {"entity_id": "button.living_room_check_speed"},
             blocking=True,
         )
     assert emulator.speed_starts == 1
@@ -783,7 +792,7 @@ async def test_speed_check_button_events_and_sensors(
     assert (
         hass.states.get("binary_sensor.living_room_speed_check_running").state == "off"
     )
-    entity_state = hass.states.get("event.living_room_events")
+    entity_state = hass.states.get("event.living_room_network_events")
     assert entity_state.attributes["event_type"] == "speed_test_completed"
     assert entity_state.attributes["download_mbps"] == 92.0
     assert coordinator.update_interval.total_seconds() == 5  # inside the grace window
@@ -811,19 +820,20 @@ async def test_channel_scan_button_and_events(
     await hass.services.async_call(
         "button",
         "press",
-        {"entity_id": "button.living_room_scan_channels"},
+        {"entity_id": "button.living_room_find_channels"},
         blocking=True,
     )
     await hass.async_block_till_done()
     assert emulator.scan_starts == 1
     assert (
-        hass.states.get("binary_sensor.living_room_channel_scan_running").state == "on"
+        hass.states.get("binary_sensor.living_room_mesh_channel_scan_running").state
+        == "on"
     )
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
             "button",
             "press",
-            {"entity_id": "button.living_room_scan_channels"},
+            {"entity_id": "button.living_room_find_channels"},
             blocking=True,
         )
     assert emulator.scan_starts == 1
@@ -834,7 +844,8 @@ async def test_channel_scan_button_and_events(
         "channel_scan_completed",
     ]
     assert (
-        hass.states.get("binary_sensor.living_room_channel_scan_running").state == "off"
+        hass.states.get("binary_sensor.living_room_mesh_channel_scan_running").state
+        == "off"
     )
 
 
@@ -1007,3 +1018,113 @@ async def test_timeout_outside_a_run_still_fails(
         await _refresh(hass, coordinator)
     assert coordinator.last_update_success is False
     assert hass.states.get("binary_sensor.living_room_internet").state == "unavailable"
+
+
+async def test_parent_node_resolved_when_router_omits_parent_id(
+    hass: HomeAssistant, emulator: Emulator, mock_entry: MockConfigEntry
+) -> None:
+    """Real routers leave parentDeviceID empty; the uplink IP names the parent."""
+    emulator.devices = [
+        node_device("node-1", PRIMARY_SERIAL, "Master", "Living Room"),
+        node_device(
+            "node-2",
+            "12K10M22222222",
+            "Slave",
+            "Bedroom",
+            ip="192.0.2.2",
+            ipv6="2001:db8::2",
+        ),
+        node_device("node-3", "12K10M33333333", "Slave", "Office", ip="192.0.2.3"),
+    ]
+    await _setup(hass, mock_entry)
+    assert hass.states.get("sensor.bedroom_mesh_parent_node").state == "Living Room"
+    assert hass.states.get("sensor.office_mesh_parent_node").state == "Living Room"
+    assert hass.states.get("sensor.bedroom_network_ipv4_address").state == "192.0.2.2"
+    assert hass.states.get("sensor.bedroom_network_ipv6_address").state == "2001:db8::2"
+    assert hass.states.get("sensor.office_network_ipv6_address") is None
+
+
+async def test_firmware_entity_has_no_brand_picture(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """The firmware entity uses the standard icon like the other entities."""
+    await _setup(hass, mock_entry)
+    state = hass.states.get("update.bedroom_firmware")
+    assert state is not None
+    assert "entity_picture" not in state.attributes
+
+
+async def test_legacy_ip_address_sensor_removed(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """The combined IP address sensor is replaced by the IPv4 and IPv6 sensors."""
+    mock_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "12K10M22222222_ip_address",
+        config_entry=mock_entry,
+    )
+    await _setup(hass, mock_entry)
+    assert registry.async_get(old.entity_id) is None
+    assert hass.states.get("sensor.bedroom_network_ipv4_address") is not None
+
+
+async def test_values_use_sentence_case(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Router status words are shown with only the first letter capitalised."""
+    await _setup(hass, mock_entry)
+    assert hass.states.get("sensor.living_room_internet_status").state == "Connected"
+    assert hass.states.get("sensor.bedroom_mesh_backhaul_type").state == "Wireless"
+    assert hass.states.get("sensor.office_mesh_backhaul_type").state == "Wired"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("connected", "Connected"),
+        ("WIRED", "Wired"),
+        ("NotAvailable", "Not available"),
+        ("Success", "Success"),
+        ("not_available", "Not available"),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_sentence_case_helper(raw: str | None, expected: str | None) -> None:
+    """Sentence case lowers every word and capitalises only the first letter."""
+    assert _sentence(raw) == expected
+
+
+async def test_entity_names_sort_in_priority_order(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """The device page sorts by name: firmware first, reboot last."""
+    await _setup(hass, mock_entry)
+    entities = er.async_entries_for_config_entry(
+        er.async_get(hass), mock_entry.entry_id
+    )
+    by_device: dict[str, list[er.RegistryEntry]] = {}
+    for entity in entities:
+        if entity.device_id and not entity.disabled:
+            by_device.setdefault(entity.device_id, []).append(entity)
+
+    def _rank(name: str) -> int:
+        tiers = ("Firmware", "Mesh", "Network")
+        return next((i for i, t in enumerate(tiers) if name.startswith(t)), len(tiers))
+
+    for members in by_device.values():
+        diagnostic = sorted(
+            (str(e.original_name) for e in members if e.entity_category is not None),
+            key=str.casefold,
+        )
+        assert diagnostic[0] == "Firmware"
+        ranks = [_rank(n) for n in diagnostic]
+        assert ranks == sorted(ranks)
+        controls = sorted(
+            (str(e.original_name) for e in members if e.domain == "button"),
+            key=str.casefold,
+        )
+        assert controls[-1] == "Reboot"

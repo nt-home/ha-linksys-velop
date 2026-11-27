@@ -178,7 +178,7 @@ def map_devices(
         conns = _connections(device)
         if conns and (parent := _str(conns[0].get("parentDeviceID"))):
             counts[parent] = counts.get(parent, 0) + 1
-    nodes = [_with_count(n, counts) for n in nodes]
+    nodes = _with_parents([_with_count(n, counts) for n in nodes])
     clients = _map_clients(client_devices) if include_clients else ()
     return tuple(nodes), clients
 
@@ -228,6 +228,40 @@ def _role(
     return NodeRole.PRIMARY if device.get("isAuthority") is True else NodeRole.CHILD
 
 
+def _with_parents(nodes: list[Node]) -> list[Node]:
+    """Fill in the parent of child nodes that do not name one.
+
+    The router usually leaves ``parentDeviceID`` empty for mesh nodes, so the
+    uplink comes from the backhaul's ``parentIPAddress`` instead. When that
+    address is not a known node (the primary's own address is often missing)
+    the parent is the primary; so it is when there is no uplink data at all,
+    since a node without a named uplink hangs off the primary.
+    """
+    by_ip = {n.ip_address: n for n in nodes if n.ip_address}
+    primary = next((n for n in nodes if n.role is NodeRole.PRIMARY), None)
+    resolved: list[Node] = []
+    for node in nodes:
+        parent = _parent_of(node, by_ip, primary)
+        resolved.append(
+            node if parent is None else replace(node, parent_device_id=parent)
+        )
+    return resolved
+
+
+def _parent_of(
+    node: Node, by_ip: Mapping[str, Node], primary: Node | None
+) -> str | None:
+    if node.role is not NodeRole.CHILD or not node.online:
+        return None
+    if node.parent_device_id is not None:
+        return None
+    parent_ip = node.backhaul.parent_ip if node.backhaul else None
+    match = by_ip.get(parent_ip) if parent_ip else None
+    if match is not None and match.device_id != node.device_id:
+        return match.device_id
+    return None if primary is None else primary.device_id
+
+
 def _with_count(node: Node, counts: Mapping[str, int]) -> Node:
     return replace(node, client_count=counts.get(node.device_id, 0))
 
@@ -260,6 +294,7 @@ def _map_node(
         hardware=_str(model.get("hardwareVersion")),
         mac=_first_mac(device),
         ip_address=_str(conns[0].get("ipAddress")) if conns else None,
+        ipv6_address=_str(conns[0].get("ipv6Address")) if conns else None,
         parent_device_id=_str(conns[0].get("parentDeviceID")) if conns else None,
         backhaul=link,
     )

@@ -167,7 +167,7 @@
         "name": "Connectivity"
       },
       "channel_scan_running": {
-        "name": "Channel scan running"
+        "name": "Mesh channel scan running"
       },
       "speed_test_running": {
         "name": "Speed check running"
@@ -178,15 +178,15 @@
         "name": "Reboot"
       },
       "channel_scan": {
-        "name": "Scan channels"
+        "name": "Find channels"
       },
       "speed_test": {
-        "name": "Start speed check"
+        "name": "Check speed"
       }
     },
     "event": {
       "hub_events": {
-        "name": "Events",
+        "name": "Network events",
         "state_attributes": {
           "event_type": {
             "state": {
@@ -209,7 +209,7 @@
         }
       },
       "client_events": {
-        "name": "Client activity",
+        "name": "Network client activity",
         "state_attributes": {
           "event_type": {
             "state": {
@@ -222,13 +222,13 @@
     },
     "sensor": {
       "wan_status": {
-        "name": "WAN status"
+        "name": "Internet status"
       },
       "wan_ip": {
         "name": "WAN IP address"
       },
       "operating_mode": {
-        "name": "Operating mode",
+        "name": "Mesh operating mode",
         "state": {
           "router": "Router",
           "bridge": "Bridge",
@@ -242,31 +242,28 @@
         "name": "Mesh nodes"
       },
       "clients_total": {
-        "name": "Connected clients"
+        "name": "Network clients"
       },
       "cpu_load": {
-        "name": "CPU load"
+        "name": "Mesh CPU load"
       },
       "memory_load": {
-        "name": "Memory load"
+        "name": "Mesh memory load"
       },
       "client_count": {
-        "name": "Connected clients"
-      },
-      "ip_address": {
-        "name": "IP address"
+        "name": "Network clients"
       },
       "backhaul_type": {
-        "name": "Backhaul type"
+        "name": "Mesh backhaul type"
       },
       "backhaul_speed": {
-        "name": "Backhaul speed"
+        "name": "Mesh backhaul speed"
       },
       "signal_strength": {
-        "name": "Backhaul signal"
+        "name": "Mesh backhaul signal"
       },
       "parent_node": {
-        "name": "Parent node"
+        "name": "Mesh parent node"
       },
       "speed_test_download": {
         "name": "Speed check download"
@@ -282,6 +279,12 @@
       },
       "speed_test_result": {
         "name": "Speed check result"
+      },
+      "ipv4_address": {
+        "name": "Network IPv4 address"
+      },
+      "ipv6_address": {
+        "name": "Network IPv6 address"
       }
     },
     "update": {

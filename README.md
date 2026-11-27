@@ -1,5 +1,5 @@
 # Linksys Velop Local for Home Assistant
-![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-0.4.0-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
+![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-0.5.0-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
 
 Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6, compatible with other MX models) over the JNAP HTTP API. No cloud. Not affiliated with Linksys.
 
@@ -23,18 +23,22 @@ Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6,
 - All mesh nodes (primary and children) are added; the hub device has the child nodes linked underneath it.
 - Works in router and bridge mode (the hub-wide client total, client events and device trackers exist only in router mode).
 - Reconfigure, re-authenticate and tune options: refresh intervals, node names, areas, included nodes, client join and leave events, presence tracking.
-- Per-node **Connected clients** count, refreshed on the **Status refresh** interval from the **Velop options**. In router mode it counts every client once, on the node it is connected to. In bridge mode the router does not say which node a wired client uses, so it counts only the Wi-Fi clients of each node (read from the router's per-node wireless connections).
+- Per-node **Network clients** count, refreshed on the **Status refresh** interval from the **Velop options**. In router mode it counts every client once, on the node it is connected to. In bridge mode the router does not say which node a wired client uses, so it counts only the Wi-Fi clients of each node (read from the router's per-node wireless connections).
 - Optional **client joined / client left** events for each mesh node, for use in automations (off by default).
-- **Scan channels** button: starts the router's own Channel Finder (automatic channel selection) over JNAP, the same action the Linksys app uses. The scan can briefly interrupt Wi-Fi and took about 5 to 6 minutes on an MX2000, so start it when that is acceptable.
-- **Start speed check** button: runs the router's built-in internet speed check (the app's **Speed Check**) and shows the finished result as diagnostic sensors.
+- **Find channels** button: starts the router's own Channel Finder (automatic channel selection) over JNAP, the same action the Linksys app uses. The scan can briefly interrupt Wi-Fi and took about 5 to 6 minutes on an MX2000, so start it when that is acceptable.
+- **Check speed** button: runs the router's built-in internet speed check (the app's **Speed Check**) and shows the finished result as diagnostic sensors.
 - Channel scan and speed check start and finish events for automations, including runs started from the Linksys app. While one runs, the status refresh speeds up to 5 s so its end is seen quickly. If the router stops answering while it works, Home Assistant keeps the last data for up to 5 minutes instead of marking entities unavailable.
+- Each node shows **IPv4** and **IPv6** address sensors (the IPv6 one only when the router reports an address) and a **Mesh parent node** sensor. The router leaves the parent empty for mesh nodes, so the parent is worked out from the backhaul uplink address, falling back to the primary node.
+- Status values (for example **Connected**, **Wired**, **Wireless**) are shown in sentence case in every entity.
+- The firmware entity uses the standard icon, like the other entities.
+- Entity names set their order on the device page, which sorts by name: **Firmware** and **Firmware version** first, then operating information (**Internet**, **Mesh ...**), then addresses and results (**Network ...**, **Speed check ...**), and controls last (**Check speed**, **Find channels**, **Reboot**).
 - Two refresh tiers: fast (default 60 s: WAN, nodes, backhaul, clients) and slow (default 30 min: firmware, statistics), with back-off while the router is unreachable.
 
 | Platform         | Entities                                                                                                                                                                                                              |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sensor`         | WAN status, WAN IP (disabled), operating mode, firmware, mesh node count, connected clients (router mode); per node: connected clients (Wi-Fi only in bridge mode), IP, backhaul type/speed, signal (disabled), parent node; CPU and memory load (disabled); hub diagnostics: speed check download, upload, ping, last run and result (disabled) |
-| `binary_sensor`  | Internet (hub), connectivity (each child node); hub diagnostics: channel scan running, speed check running                                                                                                            |
-| `button`         | Reboot (hub and each child node); Scan channels and Start speed check (hub)                                                                                                                                           |
+| `sensor`         | Internet status, WAN IP address (disabled), mesh operating mode, firmware version, mesh nodes, network clients (router mode); per node: network clients (Wi-Fi only in bridge mode), IPv4 and IPv6 address, mesh backhaul type/speed, signal (disabled), mesh parent node; mesh CPU and memory load (disabled); hub diagnostics: speed check download, upload, ping, last run and result (disabled) |
+| `binary_sensor`  | Internet (hub), connectivity (each child node); hub diagnostics: mesh channel scan running, speed check running                                                                                                            |
+| `button`         | Reboot (hub and each child node); Find channels and Check speed (hub)                                                                                                                                           |
 | `update`         | Firmware status per node (read-only)                                                                                                                                                                                  |
 | `event`          | Hub events (including channel scan and speed check); per node client activity when client events are enabled (see API Reference)                                                                                                                               |
 | `device_tracker` | Only for clients you select in the options (or all, disabled by default)                                                                                                                                              |
@@ -60,19 +64,19 @@ pip install -r requirements_test.txt
 Add the integration from **Settings → Devices & services**. Configuration files: `custom_components/ha_linksys_velop/manifest.json`, `custom_components/ha_linksys_velop/translations/en.json`.
 
 - The channel scan and speed check entities appear only when the router firmware answers the matching JNAP actions (`nodes/setup/GetSelectedChannels`, `healthcheck/GetHealthCheckStatus`). Otherwise they are not created.
-- Speed check values are shown in Mbps (the router reports kbit/s), as diagnostic entities of the hub device. The **Speed check result** entity (the router's exit code) is disabled by default. Diagnostics downloads include the last result without identifying data.
+- Speed check values are shown in Mbps (the router reports kbit/s), as diagnostic entities of the hub device. The **Speed check result** sensor (the router's exit code) is disabled by default. Diagnostics downloads include the last result without identifying data.
 - **Use SSL** off sends the admin password unencrypted over your network.
 - The password is encrypted in the config entry; the key is a separate private file, `.storage/ha_linksys_velop.key`. If that key is lost, Home Assistant asks for the password again. Anyone who can read your whole `.storage` folder or a full backup can read both files, so protect disk and backups. See [SECURITY.md](SECURITY.md).
 - Client names, MACs and IPs are not exposed unless you enable presence tracking or client join and leave events; diagnostics are redacted.
-- In **Velop options**, open the **Clients** card and switch on **Client join and leave events**. The integration reloads and each node gets a **Client activity** event entity. In bridge mode the router reports no clients, so none is created.
+- In **Velop options**, open the **Clients** card and switch on **Client join and leave events**. The integration reloads and each node gets a **Network client activity** event entity. In bridge mode the router reports no clients, so none is created.
 
 ## API Reference
 
 Home Assistant actions: `ha_linksys_velop.reboot_node` (device target) and `ha_linksys_velop.refresh_now`.
 
-The hub **Events** entity and the bus event `ha_linksys_velop_event` fire for `wan_connected`, `wan_disconnected`, `node_online`, `node_offline`, `node_added`, `node_removed`, `firmware_update_available`, `mode_changed` and `authentication_failed`. A transition must be seen in two consecutive refreshes, and nothing fires for the state at startup.
+The hub **Network events** entity and the bus event `ha_linksys_velop_event` fire for `wan_connected`, `wan_disconnected`, `node_online`, `node_offline`, `node_added`, `node_removed`, `firmware_update_available`, `mode_changed` and `authentication_failed`. A transition must be seen in two consecutive refreshes, and nothing fires for the state at startup.
 
-The same **Events** entity and bus event also fire the router activity events below. Nothing fires for a run already in progress at startup.
+The same **Network events** entity and bus event also fire the router activity events below. Nothing fires for a run already in progress at startup.
 
 | Event type               | When                                             | Extra fields                                    |
 | ------------------------ | ------------------------------------------------ | ----------------------------------------------- |
@@ -118,7 +122,7 @@ automation:
           entity_id: button.living_room_start_speed_check
 ```
 
-With **Client join and leave events** enabled, each node's **Client activity** entity and the same bus event also fire `client_joined` and `client_left` with `node_name`, `node_serial`, `client_name` and `client_mac`. The bus event's `device_id` is the node's device. A client that roams fires `client_left` on the old node and `client_joined` on the new one. Clients already connected at startup raise nothing. Events are checked on the **Status refresh** interval.
+With **Client join and leave events** enabled, each node's **Network client activity** entity and the same bus event also fire `client_joined` and `client_left` with `node_name`, `node_serial`, `client_name` and `client_mac`. The bus event's `device_id` is the node's device. A client that roams fires `client_left` on the old node and `client_joined` on the new one. Clients already connected at startup raise nothing. Events are checked on the **Status refresh** interval.
 
 Example: notify when a device joins the Office node:
 

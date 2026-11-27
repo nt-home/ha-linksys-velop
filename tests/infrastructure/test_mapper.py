@@ -717,3 +717,87 @@ def test_speed_test_bad_timestamp_and_result_id() -> None:
     assert state.latest is not None
     assert state.latest.result_id is None
     assert state.latest.timestamp is None
+
+
+# parent node and IPv6 --------------------------------------------------------
+
+
+def _uplinks(*parents: str | None) -> dict[str, Any]:
+    return {
+        "backhaulDevices": [
+            {"deviceUUID": f"n{i}", "parentIPAddress": ip}
+            for i, ip in enumerate(parents, start=2)
+            if ip
+        ]
+    }
+
+
+def test_parent_comes_from_backhaul_ip_when_router_leaves_it_empty() -> None:
+    """The router leaves parentDeviceID empty, so the uplink IP names the parent."""
+    nodes, _ = mapper.map_devices(
+        {
+            "devices": [
+                node_device("n1", "SER1", "Master", "A", ip="192.0.2.1"),
+                node_device("n2", "SER2", "Slave", "B", ip="192.0.2.2"),
+                node_device("n3", "SER3", "Slave", "C", ip="192.0.2.3"),
+            ]
+        },
+        mapper.map_backhaul(_uplinks("192.0.2.1", "192.0.2.2")),
+        include_clients=False,
+    )
+    assert nodes[1].parent_device_id == "n1"
+    assert nodes[2].parent_device_id == "n2"
+    assert nodes[0].parent_device_id is None
+
+
+def test_parent_falls_back_to_primary() -> None:
+    """An unknown or missing uplink means the primary, when there is one."""
+    devices = [
+        node_device("n1", "SER1", "Master", "A", ip=""),
+        node_device("n2", "SER2", "Slave", "B", ip="192.0.2.2"),
+        node_device("n3", "SER3", "Slave", "C", ip="192.0.2.3"),
+    ]
+    nodes, _ = mapper.map_devices(
+        {"devices": devices},
+        mapper.map_backhaul(_uplinks("10.9.9.9", None)),
+        include_clients=False,
+    )
+    assert nodes[1].parent_device_id == "n1"
+    assert nodes[2].parent_device_id == "n1"  # no uplink data at all
+    headless, _ = mapper.map_devices(
+        {"devices": devices[1:]}, {}, include_clients=False
+    )
+    assert headless[0].parent_device_id is None  # no primary to fall back on
+
+
+def test_parent_is_not_guessed_for_offline_or_self() -> None:
+    """Offline nodes have no uplink and a node is never its own parent."""
+    nodes, _ = mapper.map_devices(
+        {
+            "devices": [
+                node_device("n1", "SER1", "Master", "A", ip="192.0.2.1"),
+                node_device("n2", "SER2", "Slave", "B", connected=False),
+                node_device("n3", "SER3", "Slave", "C", ip="192.0.2.3"),
+            ]
+        },
+        mapper.map_backhaul(_uplinks(None, "192.0.2.3")),
+        include_clients=False,
+    )
+    assert nodes[1].parent_device_id is None
+    assert nodes[2].parent_device_id == "n1"
+
+
+def test_node_ipv6_address() -> None:
+    """The node's IPv6 address is mapped when the connection carries one."""
+    nodes, _ = mapper.map_devices(
+        {
+            "devices": [
+                node_device("n1", "SER1", "Master", "A", ipv6="2001:db8::1"),
+                node_device("n2", "SER2", "Slave", "B"),
+            ]
+        },
+        {},
+        include_clients=False,
+    )
+    assert nodes[0].ipv6_address == "2001:db8::1"
+    assert nodes[1].ipv6_address is None
