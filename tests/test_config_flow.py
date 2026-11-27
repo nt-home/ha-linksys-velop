@@ -408,7 +408,7 @@ async def test_reconfigure_errors(
     user_input = {
         CONF_HOST: "127.0.0.1",
         CONF_PORT: emulator.port,
-        CONF_PASSWORD: WRONG if setup == "wrong_password" else "",
+        CONF_PASSWORD: WRONG if setup == "wrong_password" else PASSWORD,
         CONF_USE_SSL: False,
     }
     if setup == "closed":

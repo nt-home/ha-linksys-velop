@@ -4,6 +4,34 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-27
+
+First stable release.
+
+### Added
+
+- Re-entry of the admin password when **Reconfigure** changes the address, port or SSL setting
+- Removal of the encryption key file when the last hub is removed
+- Validation of the private IP address the hub reports for a node before the fallback reboot sends the admin password to it
+- Dependabot updates for GitHub Actions and pip
+- Tests for address validation, administrator-only actions, password handling, key removal and hostile JSON
+
+### Changed
+
+- Bump the integration version to 1.0.0
+- Restrict the `ha_linksys_velop.reboot_node` action to Home Assistant administrators
+- Updating an already configured hub from the setup form also stores the password that was just verified at the new address
+- Check out repositories in CI without persisted credentials
+- Rewrite SECURITY.md to describe how credentials are protected and the remaining accepted risks
+- Update the README for the stable release
+
+### Security
+
+- Refuse host names that resolve to loopback through shorthand or numeric forms such as `127.1`, `2130706433` and `0x7f.1`, `*.localhost` names, IPv6 scope IDs and reserved addresses
+- Stop a failed setup form from sending the entered password back to the browser
+- Treat deeply nested JSON from a hub as an unsupported device instead of raising an unhandled error
+- Ignore a stored encryption key that is empty or not a string instead of failing on it
+
 ## [0.5.1] - 2026-11-27
 
 ### Changed
@@ -107,7 +135,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `reboot_node` and `refresh_now` actions, redacted diagnostics, repair issue for locked admin accounts.
 - Emulated JNAP router test harness (router mode, bridge mode, self-signed HTTPS, failure modes).
 
-[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.1...v1.0.0
 [0.5.1]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.3.0...v0.4.0

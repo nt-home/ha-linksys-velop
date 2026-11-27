@@ -148,7 +148,7 @@ class JnapTransport:
             raise CannotConnectError from exc
         try:
             return json.loads(raw)
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             raise UnsupportedDeviceError from exc
 
     async def async_call(
