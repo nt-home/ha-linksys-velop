@@ -1,5 +1,5 @@
 # Linksys Velop for Home Assistant
-![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-0.5.1-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
+![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-1.0.0-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
 
 Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6, compatible with other MX models) over the JNAP HTTP API. No cloud. Not affiliated with Linksys.
 
@@ -19,7 +19,7 @@ Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6,
 - Guided setup: host or IP, port, admin password, **Use SSL** and **Verify SSL certificate**.
 - **Use SSL** is on by default. The port never changes it: the values you enter are used as given. An empty port means 443 with SSL, or 80 without.
 - **Verify SSL certificate** is off by default (the router uses a self-signed certificate); turn it on when a proxy with a valid certificate sits in front of the node. It only applies with **Use SSL**.
-- The admin password is stored encrypted and decrypted only when a connection is built.
+- The admin password is stored encrypted and decrypted only when a connection is built. A failed form never sends it back to the browser, and changing the address, port or SSL setting in **Reconfigure** asks for the password again.
 - All mesh nodes (primary and children) are added; the hub device has the child nodes linked underneath it.
 - Works in router and bridge mode (the hub-wide client total, client events and device trackers exist only in router mode).
 - Reconfigure, re-authenticate and tune options: refresh intervals, node names, areas, included nodes, client join and leave events, presence tracking.
@@ -66,13 +66,14 @@ Add the integration from **Settings → Devices & services**. Configuration file
 - The channel scan and speed check entities appear only when the router firmware answers the matching JNAP actions (`nodes/setup/GetSelectedChannels`, `healthcheck/GetHealthCheckStatus`). Otherwise they are not created.
 - Speed check values are shown in Mbps (the router reports kbit/s), as diagnostic entities of the hub device. The **Speed check result** sensor (the router's exit code) is disabled by default. Diagnostics downloads include the last result without identifying data.
 - **Use SSL** off sends the admin password unencrypted over your network.
-- The password is encrypted in the config entry; the key is a separate private file, `.storage/ha_linksys_velop.key`. If that key is lost, Home Assistant asks for the password again. Anyone who can read your whole `.storage` folder or a full backup can read both files, so protect disk and backups. See [SECURITY.md](SECURITY.md).
+- The password is encrypted in the config entry; the key is a separate private file, `.storage/ha_linksys_velop.key`. If that key is lost, Home Assistant asks for the password again. The key file is deleted when the last hub is removed. Anyone who can read your whole `.storage` folder or a full backup can read both files, so protect disk and backups. See [SECURITY.md](SECURITY.md).
+- Host names such as `localhost`, `127.1` or `*.localhost`, and loopback, link-local, multicast and reserved addresses, are refused. The fallback node reboot contacts only a private IP address reported by the router.
 - Client names, MACs and IPs are not exposed unless you enable presence tracking or client join and leave events; diagnostics are redacted.
 - In **Velop options**, open the **Clients** card and switch on **Client join and leave events**. The integration reloads and each node gets a **Network client activity** event entity. In bridge mode the router reports no clients, so none is created.
 
 ## API Reference
 
-Home Assistant actions: `ha_linksys_velop.reboot_node` (device target) and `ha_linksys_velop.refresh_now`.
+Home Assistant actions: `ha_linksys_velop.reboot_node` (device target, Home Assistant administrators only) and `ha_linksys_velop.refresh_now`.
 
 The hub **Network events** entity and the bus event `ha_linksys_velop_event` fire for `wan_connected`, `wan_disconnected`, `node_online`, `node_offline`, `node_added`, `node_removed`, `firmware_update_available`, `mode_changed` and `authentication_failed`. A transition must be seen in two consecutive refreshes, and nothing fires for the state at startup.
 
@@ -173,7 +174,7 @@ Run the linters, type check and test suite against an emulated JNAP router (`tes
 ruff check . && ruff format --check . && mypy custom_components && pytest
 ```
 
-The suite covers the domain, infrastructure and application layers, the config flow, password encryption, certificate verification and the platforms.
+The suite covers the domain, infrastructure and application layers, the config flow, password encryption, key removal, address validation, administrator-only actions, certificate verification and the platforms.
 
 ## License
 

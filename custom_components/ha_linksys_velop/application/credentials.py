@@ -43,6 +43,8 @@ async def _async_cipher(hass: HomeAssistant, *, create: bool) -> PasswordCipher:
             )
             data = await store.async_load()
             key = data.get(_FIELD) if isinstance(data, dict) else None
+            if not isinstance(key, str) or not key:
+                key = None
             if key is None:
                 if not create:
                     raise SecretUnavailableError
@@ -64,3 +66,11 @@ async def async_decrypt_password(hass: HomeAssistant, stored: str) -> str:
         SecretUnavailableError: If the key is missing or the token is invalid.
     """
     return (await _async_cipher(hass, create=False)).decrypt(stored)
+
+
+async def async_remove_key(hass: HomeAssistant) -> None:
+    """Destroy the key store once no hub entry needs it any more."""
+    vault = hass.data.setdefault(_VAULT, _Vault())
+    async with vault.lock:
+        vault.cipher = None
+        await Store(hass, STORAGE_VERSION, STORAGE_KEY, private=True).async_remove()

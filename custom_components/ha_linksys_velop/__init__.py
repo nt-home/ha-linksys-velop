@@ -13,6 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from .application.credentials import (
     async_decrypt_password,
     async_encrypt_password,
+    async_remove_key,
 )
 from .application.factory import create_client
 from .const import (
@@ -138,6 +139,12 @@ def _prune_client_event_entities(hass: HomeAssistant, entry: VelopConfigEntry) -
 async def async_unload_entry(hass: HomeAssistant, entry: VelopConfigEntry) -> bool:
     """Unload a hub; coordinator listeners are removed with the platforms."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: VelopConfigEntry) -> None:
+    """Destroy the encryption key when the last hub is removed."""
+    if not hass.config_entries.async_entries(DOMAIN):
+        await async_remove_key(hass)
 
 
 async def async_remove_config_entry_device(

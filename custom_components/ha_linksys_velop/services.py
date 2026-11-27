@@ -8,6 +8,7 @@ import probatio
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.service import async_register_admin_service
 
 from .const import DOMAIN, SERVICE_REBOOT_NODE, SERVICE_REFRESH_NOW
 
@@ -57,8 +58,8 @@ async def _async_refresh_now(call: ServiceCall) -> None:
 
 
 def async_register_actions(hass: HomeAssistant) -> None:
-    """Register the reboot and refresh actions."""
-    hass.services.async_register(
-        DOMAIN, SERVICE_REBOOT_NODE, _async_reboot_node, schema=_REBOOT_SCHEMA
+    """Register the reboot (admin only) and refresh actions."""
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_REBOOT_NODE, _async_reboot_node, _REBOOT_SCHEMA
     )
     hass.services.async_register(DOMAIN, SERVICE_REFRESH_NOW, _async_refresh_now)

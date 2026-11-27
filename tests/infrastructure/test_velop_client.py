@@ -465,9 +465,17 @@ async def test_reboot_child_uuid_sent() -> None:
 
 
 async def test_reboot_child_falls_back_to_node_ip(
-    session: aiohttp.ClientSession, emulator: Emulator
+    session: aiohttp.ClientSession,
+    emulator: Emulator,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unknown Reboot2 falls back to Reboot on the node's own address."""
+    # The emulator listens on loopback, which production code refuses.
+    monkeypatch.setattr(
+        "custom_components.ha_linksys_velop.infrastructure.velop_client."
+        "validate_node_address",
+        lambda raw: raw,
+    )
     emulator.unknown_actions.add(f"{JNAP_BASE}core/Reboot2")
     await client_for(session, emulator).async_reboot(_node(NodeRole.CHILD))
     assert emulator.reboots == [{"action": "core/Reboot"}]

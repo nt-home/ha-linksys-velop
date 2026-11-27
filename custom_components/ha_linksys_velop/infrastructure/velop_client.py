@@ -26,6 +26,7 @@ from ..domain.models import (
     SystemStats,
     WanStatus,
 )
+from ..domain.validation import validate_node_address
 from . import mapper
 from .transport import (
     JNAP_BASE,
@@ -198,9 +199,12 @@ class VelopClient:
                 ACTION_REBOOT_NODE, {"deviceUUID": node.device_id}
             )
         except UnknownActionError:
-            if node.ip_address is None:
+            # The address is reported by the hub: send the password only to a
+            # private IP literal, never to a name or public address.
+            target = validate_node_address(node.ip_address)
+            if target is None:
                 raise
-            await self._transport.async_call(ACTION_REBOOT, host=node.ip_address)
+            await self._transport.async_call(ACTION_REBOOT, host=target)
 
 
 def _raise_if_fatal(response: JnapResponse) -> None:

@@ -81,7 +81,9 @@ SECTION_REFRESH = "refresh"
 SECTION_NODES = "nodes"
 SECTION_PRESENCE = "presence"
 
-_PASSWORD = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+_PASSWORD = TextSelector(
+    TextSelectorConfig(type=TextSelectorType.PASSWORD, autocomplete="current-password")
+)
 _PORT = NumberSelector(
     NumberSelectorConfig(min=1, max=65535, step=1, mode=NumberSelectorMode.BOX)
 )
@@ -106,6 +108,32 @@ def _user_schema(defaults: dict[str, Any] | None = None) -> probatio.Schema:
                 CONF_VERIFY_SSL, default=d.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
             ): BooleanSelector(),
         }
+    )
+
+
+def _without_password(user_input: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Drop the password so a failed form never sends it back to the browser."""
+    if user_input is None:
+        return None
+    return {k: v for k, v in user_input.items() if k != CONF_PASSWORD}
+
+
+class _PasswordRequiredError(Exception):
+    """Reconfigure moved the hub without a newly entered password."""
+
+
+def _target_changed(new: dict[str, Any], old: Any) -> bool:
+    """Return True when host, port or SSL differ from the stored entry."""
+    try:
+        host = validate_host(str(new.get(CONF_HOST, "")))
+    except VelopError:
+        return False  # the probe reports the invalid host
+    raw_port = new.get(CONF_PORT)
+    port = None if raw_port in (None, "") else int(raw_port)
+    return bool(
+        host != old[CONF_HOST]
+        or (port is not None and port != old[CONF_PORT])
+        or new.get(CONF_USE_SSL) != old[CONF_USE_SSL]
     )
 
 
@@ -220,12 +248,9 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors = {CONF_HOST: "invalid_host"}
             else:
                 await self.async_set_unique_id(self._probe.identity.serial)
-                self._abort_if_unique_id_configured(
-                    updates={
-                        k: self._data[k]
-                        for k in (CONF_HOST, CONF_PORT, CONF_USE_SSL, CONF_VERIFY_SSL)
-                    }
-                )
+                # The stored password is never sent to an address the user has
+                # not just authenticated against: update the password with it.
+                self._abort_if_unique_id_configured(updates=dict(self._data))
                 identity = self._probe.identity
                 return self.async_create_entry(
                     title=f"Velop {identity.model} {identity.serial[-4:]}",
@@ -233,7 +258,9 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
         return self.async_show_form(
             step_id="user",
-            data_schema=self.add_suggested_values_to_schema(_user_schema(), user_input),
+            data_schema=self.add_suggested_values_to_schema(
+                _user_schema(), _without_password(user_input)
+            ),
             errors=errors,
         )
 
@@ -247,10 +274,15 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
             merged = dict(user_input)
             try:
                 if not merged.get(CONF_PASSWORD):
+                    if _target_changed(merged, entry.data):
+                        errors["base"] = "password_required"
+                        raise _PasswordRequiredError
                     merged[CONF_PASSWORD] = await async_decrypt_password(
                         self.hass, entry.data[CONF_PASSWORD]
                     )
                 result = await self._async_probe(merged)
+            except _PasswordRequiredError:
+                pass
             except VelopError as exc:
                 errors["base"] = _error_key(exc)
                 if isinstance(exc, InvalidHostError):
