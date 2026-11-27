@@ -13,6 +13,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - **Channel scan running** and **Speed check running** diagnostic binary sensors on the hub
 - Diagnostic sensors for the last speed check: download and upload (Mbps), ping (ms), last run time, and a disabled-by-default result (exit code)
 - Hub events `channel_scan_started`, `channel_scan_completed`, `speed_test_started`, `speed_test_completed` and `speed_test_failed` on the **Events** entity and the `ha_linksys_velop_event` bus event; completed speed checks carry `download_mbps`, `upload_mbps` and `latency_ms`
+- Tolerance for a router that stops answering during a scan or speed check: the last data is kept for up to 5 minutes instead of going unavailable
 - Detection of runs started from the Linksys app, with the status refresh speeding up to 5 s while a scan or speed check runs
 - Speed check and channel scan summary in the redacted diagnostics download
 - Entities and buttons appear only when the firmware answers the matching JNAP actions

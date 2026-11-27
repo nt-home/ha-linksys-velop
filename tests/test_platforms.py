@@ -960,3 +960,50 @@ async def test_diagnostics_speed_unsupported(
     await _setup(hass, mock_entry)
     data = await async_get_config_entry_diagnostics(hass, mock_entry)
     assert data["speed_test"] is None
+
+
+async def test_busy_hub_timeout_keeps_data_during_run(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A hub too busy to answer mid speed check does not go unavailable."""
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from custom_components.ha_linksys_velop.domain.errors import (  # noqa: PLC0415
+        ConnectionTimeoutError,
+    )
+
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    await coordinator.async_start_speed_test()
+    with patch.object(
+        coordinator.client, "async_fetch_fast", side_effect=ConnectionTimeoutError
+    ):
+        await _refresh(hass, coordinator, 3)
+    assert coordinator.last_update_success is True
+    assert coordinator.data.speed_test is not None
+    assert coordinator.data.speed_test.running is True
+    assert coordinator.update_interval is not None
+    assert coordinator.update_interval.total_seconds() == 5
+    assert hass.states.get("binary_sensor.living_room_internet").state != "unavailable"
+    emulator.finish_speed()
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events][-1] == "speed_test_completed"
+
+
+async def test_timeout_outside_a_run_still_fails(
+    hass: HomeAssistant, mock_entry: MockConfigEntry
+) -> None:
+    """Without a run in progress a timeout is a normal failure."""
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from custom_components.ha_linksys_velop.domain.errors import (  # noqa: PLC0415
+        ConnectionTimeoutError,
+    )
+
+    coordinator = await _setup(hass, mock_entry)
+    with patch.object(
+        coordinator.client, "async_fetch_fast", side_effect=ConnectionTimeoutError
+    ):
+        await _refresh(hass, coordinator)
+    assert coordinator.last_update_success is False
+    assert hass.states.get("binary_sensor.living_room_internet").state == "unavailable"

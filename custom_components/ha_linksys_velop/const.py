@@ -42,6 +42,8 @@ MAX_BACKOFF_SECONDS = 300
 REBOOT_COOLDOWN_SECONDS = 60
 ACTIVE_POLL_SECONDS = 5
 ACTIVE_GRACE_SECONDS = 30
+# The hub can stop answering while it runs a speed check or channel scan.
+ACTIVE_TOLERANCE_SECONDS = 300
 
 EVENT_BUS_NAME = "ha_linksys_velop_event"
 SERVICE_REBOOT_NODE = "reboot_node"

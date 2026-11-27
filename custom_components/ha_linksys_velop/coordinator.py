@@ -19,6 +19,7 @@ from .application.events import EventDetector, EventType, VelopEvent
 from .const import (
     ACTIVE_GRACE_SECONDS,
     ACTIVE_POLL_SECONDS,
+    ACTIVE_TOLERANCE_SECONDS,
     DEFAULT_FAST_INTERVAL,
     DEFAULT_SLOW_INTERVAL,
     DOMAIN,
@@ -35,6 +36,7 @@ from .const import (
 )
 from .domain.errors import (
     AccountLockedError,
+    CannotConnectError,
     InvalidAuthError,
     NotPrimaryNodeError,
     OperationInProgressError,
@@ -94,6 +96,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         self._reboot_at: dict[str, float] = {}
         self._mode_reload = False
         self._active_until = 0.0
+        self._tolerate_until = 0.0
 
     @callback
     def async_subscribe_events(
@@ -133,6 +136,19 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         except NotPrimaryNodeError as exc:
             raise UpdateFailed(
                 translation_domain=DOMAIN, translation_key="not_primary_node"
+            ) from exc
+        except CannotConnectError as exc:
+            if self.data is not None and time.monotonic() < self._tolerate_until:
+                # A busy hub may not answer during a speed check or scan: keep
+                # the last data and look again soon instead of going unavailable.
+                _LOGGER.debug("Hub did not answer during a scan or speed check")
+                self.update_interval = timedelta(
+                    seconds=min(self._fast, ACTIVE_POLL_SECONDS)
+                )
+                return self.data
+            self._register_failure()
+            raise UpdateFailed(
+                translation_domain=DOMAIN, translation_key="cannot_connect"
             ) from exc
         except VelopError as exc:
             self._register_failure()
@@ -185,6 +201,8 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         # Poll quickly while a scan or speed check runs so its end is seen soon.
         speed = snapshot.speed_test
         busy = bool(snapshot.channel_scan_running) or bool(speed and speed.running)
+        if busy:
+            self._tolerate_until = time.monotonic() + ACTIVE_TOLERANCE_SECONDS
         if busy or time.monotonic() < self._active_until:
             self.update_interval = timedelta(
                 seconds=min(self._fast, ACTIVE_POLL_SECONDS)
@@ -349,5 +367,6 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             ) from exc
         # The hub may take a moment to report the run: keep polling briefly.
         self._active_until = time.monotonic() + ACTIVE_GRACE_SECONDS
+        self._tolerate_until = time.monotonic() + ACTIVE_TOLERANCE_SECONDS
         self.update_interval = timedelta(seconds=min(self._fast, ACTIVE_POLL_SECONDS))
         await self.async_request_refresh()

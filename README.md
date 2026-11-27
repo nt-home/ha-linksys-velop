@@ -25,9 +25,9 @@ Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6,
 - Reconfigure, re-authenticate and tune options: refresh intervals, node names, areas, included nodes, client join and leave events, presence tracking.
 - Per-node **Connected clients** count, refreshed on the **Status refresh** interval from the **Velop options**. In router mode it counts every client once, on the node it is connected to. In bridge mode the router does not say which node a wired client uses, so it counts only the Wi-Fi clients of each node (read from the router's per-node wireless connections).
 - Optional **client joined / client left** events for each mesh node, for use in automations (off by default).
-- **Scan channels** button: starts the router's own Channel Finder (automatic channel selection) over JNAP, the same action the Linksys app uses. The scan can briefly interrupt Wi-Fi, so start it when that is acceptable.
+- **Scan channels** button: starts the router's own Channel Finder (automatic channel selection) over JNAP, the same action the Linksys app uses. The scan can briefly interrupt Wi-Fi and took about 5 to 6 minutes on an MX2000, so start it when that is acceptable.
 - **Start speed check** button: runs the router's built-in internet speed check (the app's **Speed Check**) and shows the finished result as diagnostic sensors.
-- Channel scan and speed check start and finish events for automations, including runs started from the Linksys app. While one runs, the status refresh speeds up to 5 s so its end is seen quickly.
+- Channel scan and speed check start and finish events for automations, including runs started from the Linksys app. While one runs, the status refresh speeds up to 5 s so its end is seen quickly. If the router stops answering while it works, Home Assistant keeps the last data for up to 5 minutes instead of marking entities unavailable.
 - Two refresh tiers: fast (default 60 s: WAN, nodes, backhaul, clients) and slow (default 30 min: firmware, statistics), with back-off while the router is unreachable.
 
 | Platform         | Entities                                                                                                                                                                                                              |
