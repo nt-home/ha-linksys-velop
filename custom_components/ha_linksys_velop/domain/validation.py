@@ -7,8 +7,6 @@ import re
 
 from .errors import InvalidHostError
 
-PORT_HTTP = 80
-PORTS_HTTPS = frozenset({443, 8443})
 MIN_PORT = 1
 MAX_PORT = 65535
 _HOSTNAME_RE = re.compile(
@@ -67,16 +65,3 @@ def validate_port(port: int | None, *, use_ssl: bool) -> int:
     if not MIN_PORT <= port <= MAX_PORT:
         raise InvalidHostError("port")
     return port
-
-
-def effective_use_ssl(port: int | None, *, use_ssl: bool) -> bool:
-    """Return the SSL state implied by the port.
-
-    Port 80 is plain HTTP, ports 443 and 8443 are HTTPS; for any other port, or
-    no port, the user's choice stands.
-    """
-    if port == PORT_HTTP:
-        return False
-    if port in PORTS_HTTPS:
-        return True
-    return use_ssl

@@ -1,6 +1,6 @@
 {
   "domain": "ha_linksys_velop",
-  "name": "Linksys Velop Local",
+  "name": "Linksys Velop",
   "codeowners": [
     "@nt-home"
   ],
@@ -14,5 +14,5 @@
     "custom_components.ha_linksys_velop"
   ],
   "requirements": [],
-  "version": "0.5.0"
+  "version": "0.5.1"
 }

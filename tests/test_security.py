@@ -204,40 +204,17 @@ async def test_form_defaults_ssl_on_verify_off_and_order(hass: HomeAssistant) ->
     assert keys.index(CONF_VERIFY_SSL) == keys.index(CONF_USE_SSL) + 1
 
 
-@pytest.mark.parametrize(
-    ("user_ssl", "expected"),
-    [(True, False), (False, False)],
-)
-async def test_port_80_forces_ssl_off(
-    hass: HomeAssistant, user_ssl: bool, expected: bool
+@pytest.mark.parametrize("port", [80, 443, 8443, 8080])
+@pytest.mark.parametrize("user_ssl", [True, False])
+@pytest.mark.parametrize("verify", [True, False])
+async def test_entered_values_are_never_changed_by_the_port(
+    hass: HomeAssistant, port: int, user_ssl: bool, verify: bool
 ) -> None:
-    seen: dict[str, Any] = {}
-
-    def fake(hass_: Any, host: str, port: int, **kw: Any) -> Any:
-        seen.update(kw, port=port)
-        return _unreachable()
-
-    with patch("custom_components.ha_linksys_velop.config_flow.create_client", fake):
-        await _user_flow(
-            hass,
-            {
-                CONF_HOST: "192.0.2.10",
-                CONF_PORT: 80,
-                CONF_PASSWORD: "x",
-                CONF_USE_SSL: user_ssl,
-                CONF_VERIFY_SSL: True,
-            },
-        )
-    assert seen["use_ssl"] is expected
-    assert seen["verify_ssl"] is False  # verification is moot without SSL
-
-
-@pytest.mark.parametrize("port", [443, 8443])
-async def test_https_ports_force_ssl_on(hass: HomeAssistant, port: int) -> None:
+    """Use SSL and Verify SSL reach the client exactly as entered."""
     seen: dict[str, Any] = {}
 
     def fake(hass_: Any, host: str, p: int, **kw: Any) -> Any:
-        seen.update(kw)
+        seen.update(kw, port=p)
         return _unreachable()
 
     with patch("custom_components.ha_linksys_velop.config_flow.create_client", fake):
@@ -247,15 +224,16 @@ async def test_https_ports_force_ssl_on(hass: HomeAssistant, port: int) -> None:
                 CONF_HOST: "192.0.2.10",
                 CONF_PORT: port,
                 CONF_PASSWORD: "x",
-                CONF_USE_SSL: False,
-                CONF_VERIFY_SSL: True,
+                CONF_USE_SSL: user_ssl,
+                CONF_VERIFY_SSL: verify,
             },
         )
-    assert seen["use_ssl"] is True
-    assert seen["verify_ssl"] is True
+    assert seen["port"] == port
+    assert seen["use_ssl"] is user_ssl
+    assert seen["verify_ssl"] is verify
 
 
-async def test_other_port_keeps_user_choice_and_stores_verify(
+async def test_entry_stores_use_ssl_and_verify_as_entered(
     hass: HomeAssistant, emulator: Emulator
 ) -> None:
     _, result = await _user_flow(
@@ -270,7 +248,7 @@ async def test_other_port_keeps_user_choice_and_stores_verify(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_USE_SSL] is False
-    assert result["data"][CONF_VERIFY_SSL] is False
+    assert result["data"][CONF_VERIFY_SSL] is True
 
 
 async def test_setup_passes_verify_flag(

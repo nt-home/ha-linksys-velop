@@ -1,4 +1,4 @@
-"""Shared constants for the Linksys Velop Local integration."""
+"""Shared constants for the Linksys Velop integration."""
 
 from __future__ import annotations
 

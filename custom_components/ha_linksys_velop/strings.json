@@ -13,9 +13,9 @@
         },
         "data_description": {
           "host": "IP address or host name of the primary node, for example 192.168.1.1.",
-          "port": "Leave empty to use 443 with SSL or 80 without. Port 80 turns Use SSL off; ports 443 and 8443 turn it on.",
+          "port": "Leave empty to use 443 with SSL or 80 without. Common alternatives are 8443.",
           "password": "The Linksys admin password.",
-          "use_ssl": "Connect over HTTPS. On by default; the port you enter can override it (80 = off, 443 and 8443 = on).",
+          "use_ssl": "Connect over HTTPS. On by default; switch it off if your router or proxy listens on plain HTTP.",
           "verify_ssl": "Check the certificate of the HTTPS endpoint. Leave off for the router's own self-signed certificate; turn on when a proxy with a valid certificate is in front of the node. Only used with Use SSL."
         }
       },
@@ -33,7 +33,7 @@
           "host": "IP address or host name of the primary node.",
           "port": "Port of the JNAP endpoint.",
           "password": "Leave empty to keep the current password.",
-          "use_ssl": "Connect over HTTPS. The port you enter can override it (80 = off, 443 and 8443 = on).",
+          "use_ssl": "Connect over HTTPS.",
           "verify_ssl": "Check the HTTPS certificate. Only used with Use SSL."
         }
       },

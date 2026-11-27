@@ -1,4 +1,4 @@
-"""Linksys Velop Local: local JNAP control of MX-series mesh Wi-Fi."""
+"""Linksys Velop: local JNAP control of MX-series mesh Wi-Fi."""
 
 from __future__ import annotations
 

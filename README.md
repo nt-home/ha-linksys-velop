@@ -1,5 +1,5 @@
-# Linksys Velop Local for Home Assistant
-![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-0.5.0-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
+# Linksys Velop for Home Assistant
+![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-0.5.1-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
 
 Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6, compatible with other MX models) over the JNAP HTTP API. No cloud. Not affiliated with Linksys.
 
@@ -17,7 +17,7 @@ Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6,
 ## Features
 
 - Guided setup: host or IP, port, admin password, **Use SSL** and **Verify SSL certificate**.
-- **Use SSL** is on by default and follows the port: 80 turns it off, 443 and 8443 turn it on, any other port keeps your choice.
+- **Use SSL** is on by default. The port never changes it: the values you enter are used as given. An empty port means 443 with SSL, or 80 without.
 - **Verify SSL certificate** is off by default (the router uses a self-signed certificate); turn it on when a proxy with a valid certificate sits in front of the node. It only applies with **Use SSL**.
 - The admin password is stored encrypted and decrypted only when a connection is built.
 - All mesh nodes (primary and children) are added; the hub device has the child nodes linked underneath it.

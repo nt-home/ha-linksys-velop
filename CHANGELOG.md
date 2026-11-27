@@ -4,6 +4,20 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-27
+
+### Changed
+
+- Use SSL and Verify SSL certificate are kept exactly as entered; the port no longer switches Use SSL on or off in the background
+- Reword the Use SSL and port hints in the setup and reconfigure forms
+- Rename the integration from Linksys Velop Local to Linksys Velop
+- Bump the integration version to 0.5.1
+- Update the README for the new Use SSL behaviour
+
+### Removed
+
+- Port-based Use SSL adjustment (port 80 forced SSL off, ports 443 and 8443 forced it on) added in 0.2.0
+
 ## [0.5.0] - 2026-11-27
 
 ### Added
@@ -93,7 +107,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `reboot_node` and `refresh_now` actions, redacted diagnostics, repair issue for locked admin accounts.
 - Emulated JNAP router test harness (router mode, bridge mode, self-signed HTTPS, failure modes).
 
-[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.1.0...v0.2.0

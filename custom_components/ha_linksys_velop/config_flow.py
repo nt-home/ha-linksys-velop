@@ -70,7 +70,7 @@ from .domain.errors import (
     VelopError,
 )
 from .domain.models import Node, NodeRole
-from .domain.validation import effective_use_ssl, validate_host, validate_port
+from .domain.validation import validate_host, validate_port
 
 if TYPE_CHECKING:
     from .coordinator import VelopConfigEntry
@@ -183,10 +183,9 @@ class VelopConfigFlow(ConfigFlow, domain=DOMAIN):
             None if raw_port in (None, "") else int(raw_port),
             use_ssl=user_input[CONF_USE_SSL],
         )
-        use_ssl = effective_use_ssl(
-            None if raw_port in (None, "") else port, use_ssl=user_input[CONF_USE_SSL]
-        )
-        verify_ssl = use_ssl and user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+        # Stored exactly as entered; the port never changes these values.
+        use_ssl = user_input[CONF_USE_SSL]
+        verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
         client = create_client(
             self.hass,
             host,
