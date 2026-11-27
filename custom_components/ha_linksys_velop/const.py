@@ -45,6 +45,10 @@ ACTIVE_GRACE_SECONDS = 30
 # The hub can stop answering while it runs a speed check or channel scan.
 ACTIVE_TOLERANCE_SECONDS = 300
 
+# A boot time worked out from the uptime moves a little with every refresh;
+# it only counts as a new boot when it moves further than this.
+BOOT_TIME_TOLERANCE_SECONDS = 120
+
 EVENT_BUS_NAME = "ha_linksys_velop_event"
 SERVICE_REBOOT_NODE = "reboot_node"
 SERVICE_REFRESH_NOW = "refresh_now"

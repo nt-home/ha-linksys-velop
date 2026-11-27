@@ -71,6 +71,12 @@
       },
       "firmware_version": {
         "default": "mdi:tag-text-outline"
+      },
+      "online_since": {
+        "default": "mdi:clock-start"
+      },
+      "online_for": {
+        "default": "mdi:timer-sand"
       }
     },
     "event": {
@@ -79,6 +85,9 @@
       },
       "client_events": {
         "default": "mdi:account-switch"
+      },
+      "node_events": {
+        "default": "mdi:router-wireless-settings"
       }
     },
     "button": {

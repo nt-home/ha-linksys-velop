@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
 _MAX_ITEMS = 1000
+_MAX_UPTIME_SECONDS = 100 * 365 * 86400
 
 
 def _str(value: object) -> str | None:
@@ -349,6 +350,14 @@ def map_stats(output: Mapping[str, Any]) -> SystemStats:
         cpu_load=_num(output.get("CPULoad")),
         memory_load=_num(output.get("MemoryLoad")),
     )
+
+
+def map_uptime(output: Mapping[str, Any]) -> int | None:
+    """Map the ``uptimeSeconds`` of diagnostics/GetSystemStats."""
+    seconds = _num(output.get("uptimeSeconds"))
+    if seconds is None or seconds < 0 or seconds > _MAX_UPTIME_SECONDS:
+        return None
+    return int(seconds)
 
 
 _KBPS_PER_MBPS = 1000

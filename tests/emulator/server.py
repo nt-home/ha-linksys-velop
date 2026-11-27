@@ -95,6 +95,8 @@ class Emulator:
     speed_results: list[dict[str, Any]] = field(default_factory=list)
     speed_running: bool = False
     speed_starts: int = 0
+    uptime_seconds: int | None = 90061
+    wan_ip: str = "203.0.113.9"
     reject_wrapped_transaction: bool = True
     _server: TestServer | None = None
 
@@ -182,7 +184,7 @@ class Emulator:
             "output": {
                 "detectedWANType": self.wan_type,
                 "wanStatus": self.wan_status,
-                "wanConnection": {"wanType": self.wan_type, "ipAddress": "203.0.113.9"},
+                "wanConnection": {"wanType": self.wan_type, "ipAddress": self.wan_ip},
             },
         }
 
@@ -201,7 +203,10 @@ class Emulator:
         return {"result": "OK", "output": {"firmwareUpdateStatus": self.firmware}}
 
     def _a_diagnostics_GetSystemStats(self) -> dict[str, Any]:
-        return {"result": "OK", "output": {"CPULoad": "12.5", "MemoryLoad": "40"}}
+        output: dict[str, Any] = {"CPULoad": "12.5", "MemoryLoad": "40"}
+        if self.uptime_seconds is not None:
+            output["uptimeSeconds"] = self.uptime_seconds
+        return {"result": "OK", "output": output}
 
     def _a_core_Reboot(self) -> dict[str, Any]:
         self.reboots.append({"action": "core/Reboot"})

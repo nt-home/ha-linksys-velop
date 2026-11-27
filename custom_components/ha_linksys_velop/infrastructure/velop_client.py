@@ -118,11 +118,18 @@ class VelopClient:
                 JnapAction(ACTION_CHANNEL_SCAN_STATUS),
                 JnapAction(ACTION_SPEED_STATUS),
                 JnapAction(ACTION_SPEED_RESULTS, SPEED_RESULTS_REQUEST),
+                JnapAction(ACTION_SYSTEM_STATS),
             ]
         )
-        devices_resp, backhaul_resp, wan_resp, scan_resp, speed_resp, results_resp = (
-            responses
-        )
+        (
+            devices_resp,
+            backhaul_resp,
+            wan_resp,
+            scan_resp,
+            speed_resp,
+            results_resp,
+            uptime_resp,
+        ) = responses
         for response in responses:
             _raise_if_fatal(response)
         wan = _wan_or_unknown(wan_resp)
@@ -148,6 +155,9 @@ class VelopClient:
                 mapper.map_channel_scan(scan_resp.output) if scan_resp.ok else None
             ),
             speed_test=_speed_state(speed_resp, results_resp),
+            uptime_seconds=(
+                mapper.map_uptime(uptime_resp.output) if uptime_resp.ok else None
+            ),
         )
 
     async def _bridge_client_counts(self, nodes: tuple[Node, ...]) -> tuple[Node, ...]:
