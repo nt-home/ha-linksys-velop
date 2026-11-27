@@ -36,6 +36,10 @@ class EventType(StrEnum):
     SPEED_TEST_STARTED = "speed_test_started"
     SPEED_TEST_COMPLETED = "speed_test_completed"
     SPEED_TEST_FAILED = "speed_test_failed"
+    WAN_IP_CHANGED = "wan_ip_changed"
+    NODE_FIRMWARE_UPDATED = "node_firmware_updated"
+    NODE_BACKHAUL_CHANGED = "node_backhaul_changed"
+    NODE_REBOOTED = "node_rebooted"
 
 
 CLIENT_EVENT_TYPES: list[str] = [
@@ -45,6 +49,27 @@ CLIENT_EVENT_TYPES: list[str] = [
 HUB_EVENT_TYPES: list[str] = [
     e.value for e in EventType if e.value not in CLIENT_EVENT_TYPES
 ]
+# Events about one node. They also reach the hub entity (as before) and are
+# repeated on the entity of the node they concern.
+NODE_EVENT_TYPES: list[str] = [
+    EventType.NODE_ONLINE.value,
+    EventType.NODE_OFFLINE.value,
+    EventType.FIRMWARE_UPDATE_AVAILABLE.value,
+    EventType.NODE_FIRMWARE_UPDATED.value,
+    EventType.NODE_BACKHAUL_CHANGED.value,
+    EventType.NODE_REBOOTED.value,
+]
+# Types that name a node but keep the hub as the owner of the bus event, so
+# automations written for earlier versions keep matching.
+HUB_OWNED_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.NODE_ONLINE,
+        EventType.NODE_OFFLINE,
+        EventType.NODE_ADDED,
+        EventType.NODE_REMOVED,
+        EventType.FIRMWARE_UPDATE_AVAILABLE,
+    }
+)
 EVENT_TYPES: list[str] = [e.value for e in EventType]
 
 
@@ -115,6 +140,10 @@ class EventDetector:
         self._known: set[str] = set()
         self._absent: dict[str, int] = {}
         self._firmware: dict[str, str | None] = {}
+        self._wan_ip = _Debounced[str](debounce)
+        self._uptime: int | None = None
+        self._versions: dict[str, str | None] = {}
+        self._backhaul: dict[str, _Debounced[str | None]] = {}
         self._scan_running: bool | None = None
         self._speed_running: bool | None = None
         self._speed_id: int | None = None
@@ -124,8 +153,11 @@ class EventDetector:
         events: list[VelopEvent] = []
         self._wan_events(snapshot, events)
         self._mode_events(snapshot, events)
+        self._wan_ip_events(snapshot, events)
         removed = self._node_events(snapshot, events)
         self._firmware_events(snapshot, events)
+        self._node_change_events(snapshot, events)
+        self._reboot_events(snapshot, events)
         self._activity_events(snapshot, events)
         if self._track_clients:
             self._client_events(snapshot, events)
@@ -139,6 +171,15 @@ class EventDetector:
         if self._wan.observe(connected):
             kind = EventType.WAN_CONNECTED if connected else EventType.WAN_DISCONNECTED
             events.append(VelopEvent(kind))
+
+    def _wan_ip_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
+        """Emit a change of the WAN address; a missing address is not a change."""
+        address = snapshot.wan.ip_address
+        if address is None:
+            return
+        previous = self._wan_ip.confirmed
+        if self._wan_ip.observe(address) and previous is not None:
+            events.append(VelopEvent(EventType.WAN_IP_CHANGED, detail=address))
 
     def _mode_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
         if snapshot.mode is NetworkMode.UNKNOWN:
@@ -172,6 +213,8 @@ class EventDetector:
             self._absent.pop(serial, None)
             self._online.pop(serial, None)
             self._firmware.pop(serial, None)
+            self._versions.pop(serial, None)
+            self._backhaul.pop(serial, None)
         return removed
 
     def _firmware_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
@@ -194,6 +237,54 @@ class EventDetector:
                     )
                 )
             self._firmware[node.serial] = version
+
+    def _node_change_events(
+        self, snapshot: HubSnapshot, events: list[VelopEvent]
+    ) -> None:
+        """Emit an installed firmware change and a switch of the uplink type."""
+        for node in snapshot.nodes:
+            known = node.serial in self._versions
+            if (
+                self._baseline
+                and known
+                and node.firmware is not None
+                and self._versions[node.serial] not in (None, node.firmware)
+            ):
+                events.append(
+                    VelopEvent(
+                        EventType.NODE_FIRMWARE_UPDATED,
+                        node.name,
+                        node.serial,
+                        node.firmware,
+                    )
+                )
+            if node.firmware is not None or not known:
+                self._versions[node.serial] = node.firmware
+            if node.backhaul is None or node.backhaul.connection_type is None:
+                continue
+            link = node.backhaul.connection_type
+            tracker = self._backhaul.setdefault(
+                node.serial, _Debounced[str | None](self._debounce)
+            )
+            if tracker.observe(link):
+                events.append(
+                    VelopEvent(
+                        EventType.NODE_BACKHAUL_CHANGED, node.name, node.serial, link
+                    )
+                )
+
+    def _reboot_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
+        """Emit a reboot of the primary node when its uptime goes backwards."""
+        uptime = snapshot.uptime_seconds
+        primary = snapshot.primary
+        if uptime is None or primary is None:
+            return
+        previous = self._uptime
+        self._uptime = uptime
+        if previous is not None and uptime < previous:
+            events.append(
+                VelopEvent(EventType.NODE_REBOOTED, primary.name, primary.serial)
+            )
 
     def _activity_events(self, snapshot: HubSnapshot, events: list[VelopEvent]) -> None:
         """Emit start/finish events for Channel Finder and the speed check.

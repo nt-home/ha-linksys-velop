@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 from homeassistant.components.event import EventEntity
 from homeassistant.core import callback
 
-from .application.events import CLIENT_EVENT_TYPES, HUB_EVENT_TYPES, VelopEvent
+from .application.events import (
+    CLIENT_EVENT_TYPES,
+    HUB_EVENT_TYPES,
+    NODE_EVENT_TYPES,
+    VelopEvent,
+)
 from .const import OPT_CLIENT_EVENTS
 from .domain.models import NetworkMode
 from .entity import VelopEntity, async_add_node_entities
@@ -59,6 +64,19 @@ class VelopEventEntity(VelopEntity, EventEntity):
         self.async_write_ha_state()
 
 
+class VelopNodeEventEntity(VelopEventEntity):
+    """Fires for transitions of this node (online, offline, reboot, firmware)."""
+
+    _attr_event_types = NODE_EVENT_TYPES
+    _key = "node_events"
+
+    @callback
+    def _handle(self, event: VelopEvent) -> None:
+        if event.node_serial != self._serial:
+            return
+        super()._handle(event)
+
+
 class VelopClientEventEntity(VelopEventEntity):
     """Fires when a client joins or leaves this node (opt-in, router mode)."""
 
@@ -70,6 +88,10 @@ class VelopClientEventEntity(VelopEventEntity):
         if event.node_serial != self._serial:
             return
         super()._handle(event)
+
+
+def _node_events_factory(coordinator: VelopCoordinator, node: Node) -> list[Entity]:
+    return [VelopNodeEventEntity(coordinator, node.serial)]
 
 
 def _client_events_factory(coordinator: VelopCoordinator, node: Node) -> list[Entity]:
@@ -84,6 +106,7 @@ async def async_setup_entry(
     """Set up the hub event entity."""
     coordinator = entry.runtime_data
     async_add_entities([VelopEventEntity(coordinator, coordinator.identity.serial)])
+    async_add_node_entities(entry, async_add_entities, _node_events_factory)
     if (
         entry.options.get(OPT_CLIENT_EVENTS, False)
         and coordinator.data.mode is NetworkMode.ROUTER

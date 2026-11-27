@@ -1,5 +1,5 @@
 # Linksys Velop for Home Assistant
-![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-1.0.0-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
+![Language](https://img.shields.io/badge/language-Python-blue) ![Version](https://img.shields.io/badge/version-1.1.0-informational) ![License](https://img.shields.io/badge/license-MIT-green) ![Build](https://img.shields.io/github/actions/workflow/status/nt-home/ha-linksys-velop/ci.yml)
 
 Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6, compatible with other MX models) over the JNAP HTTP API. No cloud. Not affiliated with Linksys.
 
@@ -32,15 +32,18 @@ Local control of a Linksys Velop MX-series mesh (built for the MX2000 / Atlas 6,
 - Status values (for example **Connected**, **Wired**, **Wireless**) are shown in sentence case in every entity.
 - The firmware entity uses the standard icon, like the other entities.
 - Entity names set their order on the device page, which sorts by name: **Firmware** and **Firmware version** first, then operating information (**Internet**, **Mesh ...**), then addresses and results (**Network ...**, **Speed check ...**), and controls last (**Check speed**, **Find channels**, **Reboot**).
+- **Online since** and **Online for** diagnostic sensors on every node. **Online since** is a timestamp that Home Assistant shows as a relative time ("2 hours ago"). **Online for** is text that changes unit with the size of the value: seconds, minutes, hours, days, weeks, months and years (for example `45 seconds`, `3 hours 5 minutes`, `1 year 2 months`; a month counts 30 days and a year 365 days). It refreshes with the **Status refresh** interval. The hub's time is its boot time, worked out from the `uptimeSeconds` value of `diagnostics/GetSystemStats`, and stays steady while polling only moves it by up to 2 minutes. The router reports no uptime for child nodes, so a child's time is when Home Assistant last saw it come online (it resets after the node was offline, and after Home Assistant restarts).
+- A **Node events** entity on every node, so an automation can trigger on one node's events. It repeats that node's `node_online`, `node_offline`, `firmware_update_available`, `node_firmware_updated`, `node_backhaul_changed` and `node_rebooted` events.
+- New events: `node_rebooted` (the hub's uptime went backwards), `node_firmware_updated` (a node runs a new firmware version), `node_backhaul_changed` (a node switched between wired and wireless uplink) and `wan_ip_changed` (the internet address changed).
 - Two refresh tiers: fast (default 60 s: WAN, nodes, backhaul, clients) and slow (default 30 min: firmware, statistics), with back-off while the router is unreachable.
 
 | Platform         | Entities                                                                                                                                                                                                              |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sensor`         | Internet status, WAN IP address (disabled), mesh operating mode, firmware version, mesh nodes, network clients (router mode); per node: network clients (Wi-Fi only in bridge mode), IPv4 and IPv6 address, mesh backhaul type/speed, signal (disabled), mesh parent node; mesh CPU and memory load (disabled); hub diagnostics: speed check download, upload, ping, last run and result (disabled) |
+| `sensor`         | Online since and online for (each node, diagnostic); internet status, WAN IP address (disabled), mesh operating mode, firmware version, mesh nodes, network clients (router mode); per node: network clients (Wi-Fi only in bridge mode), IPv4 and IPv6 address, mesh backhaul type/speed, signal (disabled), mesh parent node; mesh CPU and memory load (disabled); hub diagnostics: speed check download, upload, ping, last run and result (disabled) |
 | `binary_sensor`  | Internet (hub), connectivity (each child node); hub diagnostics: mesh channel scan running, speed check running                                                                                                            |
 | `button`         | Reboot (hub and each child node); Find channels and Check speed (hub)                                                                                                                                           |
 | `update`         | Firmware status per node (read-only)                                                                                                                                                                                  |
-| `event`          | Hub events (including channel scan and speed check); per node client activity when client events are enabled (see API Reference)                                                                                                                               |
+| `event`          | Hub events (including channel scan and speed check); node events (each node); per node client activity when client events are enabled (see API Reference)                                                                                                                               |
 | `device_tracker` | Only for clients you select in the options (or all, disabled by default)                                                                                                                                              |
 
 ## Prerequisites
@@ -77,7 +80,18 @@ Home Assistant actions: `ha_linksys_velop.reboot_node` (device target, Home Assi
 
 The hub **Network events** entity and the bus event `ha_linksys_velop_event` fire for `wan_connected`, `wan_disconnected`, `node_online`, `node_offline`, `node_added`, `node_removed`, `firmware_update_available`, `mode_changed` and `authentication_failed`. A transition must be seen in two consecutive refreshes, and nothing fires for the state at startup.
 
-The same **Network events** entity and bus event also fire the router activity events below. Nothing fires for a run already in progress at startup.
+The same **Network events** entity and bus event also fire the node and WAN events below. Each node's **Node events** entity receives the node events (`node_online`, `node_offline`, `firmware_update_available` and the three new node events) for that node only. A `wan_ip_changed` event carries the new public address in `detail`, so it is visible in the logbook and on the bus.
+
+| Event type              | When                                                         | Extra fields                          |
+| ----------------------- | ------------------------------------------------------------ | ------------------------------------- |
+| `node_rebooted`         | The hub's uptime is lower than at the previous refresh       | `node_name`, `node_serial`            |
+| `node_firmware_updated` | A node reports a different installed firmware version        | `node_name`, `node_serial`, `detail` (new version) |
+| `node_backhaul_changed` | A node's uplink changed between wired and wireless           | `node_name`, `node_serial`, `detail` (new type)    |
+| `wan_ip_changed`        | The WAN IP address changed (not fired when it only disappears) | `detail` (new address)              |
+
+The new types follow the same rules as the others: a change must be seen in two consecutive refreshes (except `node_rebooted`, which uses the uptime of one refresh), and nothing fires for the state at startup. For `node_rebooted`, `node_firmware_updated` and `node_backhaul_changed` the bus event's `device_id` is the node's device. The earlier node events (`node_online`, `node_offline`, `node_added`, `node_removed`, `firmware_update_available`) keep the hub as `device_id`, so existing automations still match.
+
+The router activity events: Nothing fires for a run already in progress at startup.
 
 | Event type               | When                                             | Extra fields                                    |
 | ------------------------ | ------------------------------------------------ | ----------------------------------------------- |
@@ -88,6 +102,38 @@ The same **Network events** entity and bus event also fire the router activity e
 | `speed_test_failed`      | A speed check ends without a result              | `detail` (the router's exit code)               |
 
 Pressing a button while the same activity runs, or on firmware without the feature, raises an error in Home Assistant instead of starting it.
+
+Example: notify when the Office node goes offline, using its own **Node events** entity:
+
+```yaml
+automation:
+  - alias: Office node offline
+    triggers:
+      - trigger: state
+        entity_id: event.office_node_events
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.to_state.attributes.event_type == 'node_offline' }}"
+    actions:
+      - action: notify.notify
+        data:
+          message: "{{ trigger.to_state.attributes.node_name }} went offline"
+```
+
+Example: notify when the hub has run for more than a week without a reboot (the **Online since** sensor is a timestamp, so templates can compare it):
+
+```yaml
+automation:
+  - alias: Velop hub up for a week
+    triggers:
+      - trigger: template
+        value_template: >
+          {{ now() - states('sensor.living_room_online_since') | as_datetime > timedelta(days=7) }}
+    actions:
+      - action: notify.notify
+        data:
+          message: "The Velop hub has been online for {{ states('sensor.living_room_online_for') }}"
+```
 
 Example: notify with the result of every speed check:
 

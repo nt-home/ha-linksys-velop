@@ -801,3 +801,27 @@ def test_node_ipv6_address() -> None:
     )
     assert nodes[0].ipv6_address == "2001:db8::1"
     assert nodes[1].ipv6_address is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (90061, 90061),
+        ("120", 120),
+        (12.9, 12),
+        (0, 0),
+        (-1, None),
+        (True, None),
+        ("soon", None),
+        (None, None),
+        (10**12, None),
+    ],
+)
+def test_map_uptime(raw: object, expected: int | None) -> None:
+    """Only a sane, non-negative number of seconds is accepted."""
+    assert mapper.map_uptime({"uptimeSeconds": raw}) == expected
+
+
+def test_map_uptime_missing() -> None:
+    """A stats answer without uptime maps to None."""
+    assert mapper.map_uptime({}) is None

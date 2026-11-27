@@ -20,8 +20,10 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .domain.duration import humanize_duration
 from .domain.models import NetworkMode, NodeRole
 from .entity import VelopEntity, async_add_node_entities
 
@@ -203,7 +205,28 @@ SPEED_TEST_SENSORS: tuple[VelopSensorDescription, ...] = (
     ),
 )
 
+
+def _online_for(node: Node, _snap: HubSnapshot) -> str | None:
+    """Return how long the node has been online, in the unit that fits."""
+    if node.online_since is None:
+        return None
+    return humanize_duration((dt_util.utcnow() - node.online_since).total_seconds())
+
+
 NODE_SENSORS: tuple[VelopSensorDescription, ...] = (
+    VelopSensorDescription(
+        key="online_since",
+        translation_key="online_since",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda n, _s: n.online_since,
+    ),
+    VelopSensorDescription(
+        key="online_for",
+        translation_key="online_for",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_online_for,
+    ),
     VelopSensorDescription(
         key="client_count",
         translation_key="client_count",

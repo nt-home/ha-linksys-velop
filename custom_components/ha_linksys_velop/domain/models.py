@@ -79,6 +79,7 @@ class Node:
     location: str | None = None
     client_count: int | None = None
     backhaul: Backhaul | None = None
+    online_since: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +144,7 @@ class FastSnapshot:
     """Data refreshed on the fast interval.
 
     ``channel_scan_running`` and ``speed_test`` are None when the firmware does
-    not offer the feature.
+    not offer the feature. ``uptime_seconds`` is the primary node's uptime.
     """
 
     wan: WanStatus
@@ -151,6 +152,7 @@ class FastSnapshot:
     clients: tuple[Client, ...] = ()
     channel_scan_running: bool | None = None
     speed_test: SpeedTestState | None = None
+    uptime_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +177,7 @@ class HubSnapshot:
     stats: SystemStats
     channel_scan_running: bool | None = None
     speed_test: SpeedTestState | None = None
+    uptime_seconds: int | None = None
 
     @property
     def mode(self) -> NetworkMode:

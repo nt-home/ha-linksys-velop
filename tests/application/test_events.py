@@ -9,12 +9,14 @@ from custom_components.ha_linksys_velop.application.events import (
     CLIENT_EVENT_TYPES,
     EVENT_TYPES,
     HUB_EVENT_TYPES,
+    NODE_EVENT_TYPES,
     EventDetector,
     EventType,
     VelopEvent,
     _Debounced,
 )
 from custom_components.ha_linksys_velop.domain.models import (
+    Backhaul,
     Client,
     FirmwareStatus,
     HubIdentity,
@@ -29,15 +31,25 @@ from custom_components.ha_linksys_velop.domain.models import (
 )
 
 
-def node(serial: str, *, online: bool = True, name: str | None = None) -> Node:
-    """Build a child node."""
+def node(
+    serial: str,
+    *,
+    online: bool = True,
+    name: str | None = None,
+    firmware: str | None = None,
+    link: str | None = None,
+    role: NodeRole = NodeRole.CHILD,
+) -> Node:
+    """Build a node."""
     return Node(
         device_id=f"id-{serial}",
         serial=serial,
         name=name or serial,
         model="MX2000",
-        role=NodeRole.CHILD,
+        role=role,
         online=online,
+        firmware=firmware,
+        backhaul=None if link is None else Backhaul(link, None, None, None),
     )
 
 
@@ -48,17 +60,20 @@ def snap(
     mode: NetworkMode = NetworkMode.ROUTER,
     firmware: dict[str, str] | None = None,
     clients: tuple[Client, ...] = (),
+    wan_ip: str | None = None,
+    uptime: int | None = None,
 ) -> HubSnapshot:
     """Build a snapshot; firmware maps device id to available version."""
     return HubSnapshot(
         identity=HubIdentity("S", "M", "1"),
-        wan=WanStatus(connected, None, None, None, mode),
+        wan=WanStatus(connected, None, None, wan_ip, mode),
         nodes=nodes,
         clients=clients,
         firmware=MappingProxyType(
             {k: FirmwareStatus(v) for k, v in (firmware or {}).items()}
         ),
         stats=SystemStats(),
+        uptime_seconds=uptime,
     )
 
 
@@ -496,3 +511,91 @@ def test_speed_test_unsupported_is_silent() -> None:
     """No speed state means nothing to report."""
     det = EventDetector()
     assert feed(det, act(speed=None), act(speed=None)) == []
+
+
+def test_wan_ip_change_is_debounced_and_never_replays() -> None:
+    """A changed WAN address fires once it is confirmed; gaps are ignored."""
+    det = EventDetector()
+    out = feed(
+        det,
+        snap(wan_ip="203.0.113.1"),
+        snap(wan_ip=None),
+        snap(wan_ip="203.0.113.1"),
+        snap(wan_ip="203.0.113.2"),
+    )
+    assert out == []
+    out = feed(det, snap(wan_ip="203.0.113.2"))
+    assert [(e.type, e.detail) for e in out] == [
+        (EventType.WAN_IP_CHANGED, "203.0.113.2")
+    ]
+    assert feed(det, snap(wan_ip="203.0.113.2")) == []
+
+
+def test_node_firmware_updated_after_baseline() -> None:
+    """An installed firmware change fires; the first sighting does not."""
+    det = EventDetector()
+    out = feed(
+        det,
+        snap((node("A", firmware="1.0"),)),
+        snap((node("A", firmware="1.0"),)),
+        snap((node("A", firmware=None),)),
+        snap((node("A", firmware="1.1"),)),
+    )
+    assert [(e.type, e.node_serial, e.detail) for e in out] == [
+        (EventType.NODE_FIRMWARE_UPDATED, "A", "1.1")
+    ]
+
+
+def test_node_added_later_with_firmware_is_not_an_update() -> None:
+    """A node that appears with a firmware version has nothing to compare."""
+    det = EventDetector()
+    out = feed(det, snap(()), snap((node("B", firmware="2.0"),)))
+    assert EventType.NODE_FIRMWARE_UPDATED not in types(out)
+
+
+def test_backhaul_change_is_debounced() -> None:
+    """A switch between wired and wireless uplink fires once confirmed."""
+    det = EventDetector()
+    wired = snap((node("A", link="wired"),))
+    wireless = snap((node("A", link="wireless"),))
+    assert feed(det, wired, wireless, wired, wireless) == []
+    out = feed(det, wireless)
+    assert [(e.type, e.detail) for e in out] == [
+        (EventType.NODE_BACKHAUL_CHANGED, "wireless")
+    ]
+    assert feed(det, snap((node("A"),))) == []
+
+
+def test_removed_node_forgets_change_state() -> None:
+    """Removing a node clears its firmware and backhaul memory."""
+    det = EventDetector()
+    feed(det, snap((node("A", firmware="1", link="wired"),)))
+    for _ in range(ABSENT_LIMIT):
+        feed(det, snap(()))
+    assert "A" not in det._versions
+    assert "A" not in det._backhaul
+
+
+def test_reboot_when_uptime_goes_backwards() -> None:
+    """The primary's uptime dropping reports a reboot; growth does not."""
+    det = EventDetector()
+    primary = (node("P", role=NodeRole.PRIMARY, name="Hub"),)
+    out = feed(
+        det,
+        snap(primary, uptime=1000),
+        snap(primary, uptime=1060),
+        snap(primary, uptime=None),
+        snap(primary, uptime=1120),
+    )
+    assert out == []
+    out = feed(det, snap(primary, uptime=30))
+    assert [(e.type, e.node_name, e.node_serial) for e in out] == [
+        (EventType.NODE_REBOOTED, "Hub", "P")
+    ]
+    assert feed(det, snap((), uptime=500)) == []
+
+
+def test_node_event_types_are_hub_events() -> None:
+    """Every node event type also reaches the hub entity."""
+    assert set(NODE_EVENT_TYPES) <= set(HUB_EVENT_TYPES)
+    assert not set(NODE_EVENT_TYPES) & set(CLIENT_EVENT_TYPES)

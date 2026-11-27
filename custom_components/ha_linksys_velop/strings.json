@@ -204,7 +204,11 @@
               "channel_scan_completed": "Channel scan completed",
               "speed_test_started": "Speed check started",
               "speed_test_completed": "Speed check completed",
-              "speed_test_failed": "Speed check failed"
+              "speed_test_failed": "Speed check failed",
+              "wan_ip_changed": "WAN IP address changed",
+              "node_firmware_updated": "Node firmware updated",
+              "node_backhaul_changed": "Node backhaul changed",
+              "node_rebooted": "Node rebooted"
             }
           }
         }
@@ -216,6 +220,21 @@
             "state": {
               "client_joined": "Client joined",
               "client_left": "Client left"
+            }
+          }
+        }
+      },
+      "node_events": {
+        "name": "Node events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "node_online": "Node online",
+              "node_offline": "Node offline",
+              "firmware_update_available": "Firmware update available",
+              "node_firmware_updated": "Node firmware updated",
+              "node_backhaul_changed": "Node backhaul changed",
+              "node_rebooted": "Node rebooted"
             }
           }
         }
@@ -286,6 +305,12 @@
       },
       "ipv6_address": {
         "name": "Network IPv6 address"
+      },
+      "online_since": {
+        "name": "Online since"
+      },
+      "online_for": {
+        "name": "Online for"
       }
     },
     "update": {

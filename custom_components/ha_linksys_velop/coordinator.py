@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import random
 import time
-from datetime import timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,12 +15,19 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
-from .application.events import EventDetector, EventType, VelopEvent
+from .application.events import (
+    HUB_OWNED_TYPES,
+    EventDetector,
+    EventType,
+    VelopEvent,
+)
 from .const import (
     ACTIVE_GRACE_SECONDS,
     ACTIVE_POLL_SECONDS,
     ACTIVE_TOLERANCE_SECONDS,
+    BOOT_TIME_TOLERANCE_SECONDS,
     DEFAULT_FAST_INTERVAL,
     DEFAULT_SLOW_INTERVAL,
     DOMAIN,
@@ -50,6 +58,7 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
+    from .domain.models import FastSnapshot
     from .domain.ports import HubPort
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,6 +103,7 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         )
         self._event_listeners: list[Callable[[VelopEvent], None]] = []
         self._reboot_at: dict[str, float] = {}
+        self._online_since: dict[str, datetime] = {}
         self._mode_reload = False
         self._active_until = 0.0
         self._tolerate_until = 0.0
@@ -162,12 +172,13 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         snapshot = HubSnapshot(
             identity=self.identity,
             wan=fast.wan,
-            nodes=self._filter_nodes(fast.nodes),
+            nodes=self._with_online_since(self._filter_nodes(fast.nodes), fast),
             clients=fast.clients,
             firmware=slow.firmware,
             stats=slow.stats,
             channel_scan_running=fast.channel_scan_running,
             speed_test=fast.speed_test,
+            uptime_seconds=fast.uptime_seconds,
         )
         excluded = {n.serial for n in fast.nodes} - {n.serial for n in snapshot.nodes}
         self._publish(snapshot, excluded)
@@ -193,6 +204,37 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
         return tuple(
             n for n in nodes if n.role is NodeRole.PRIMARY or n.serial in allowed
         )
+
+    def _with_online_since(
+        self, nodes: tuple[Node, ...], fast: FastSnapshot
+    ) -> tuple[Node, ...]:
+        """Stamp each online node with the time it came online.
+
+        The primary node's time is its boot time from the reported uptime; it
+        is kept steady while it only drifts by polling jitter. A child node
+        reports no uptime, so its time is when this integration first saw it
+        online (again) and the router never claims more than that.
+        """
+        now = dt_util.utcnow()
+        stamped: list[Node] = []
+        for node in nodes:
+            if not node.online:
+                self._online_since.pop(node.serial, None)
+                stamped.append(node)
+                continue
+            since = self._online_since.get(node.serial)
+            if node.role is NodeRole.PRIMARY and fast.uptime_seconds is not None:
+                boot = now - timedelta(seconds=fast.uptime_seconds)
+                if (
+                    since is None
+                    or abs((boot - since).total_seconds()) > BOOT_TIME_TOLERANCE_SECONDS
+                ):
+                    since = boot
+            elif since is None:
+                since = now
+            self._online_since[node.serial] = since
+            stamped.append(replace(node, online_since=since))
+        return tuple(stamped)
 
     def _register_success(self, snapshot: HubSnapshot) -> None:
         if self._failures >= 3:  # noqa: PLR2004
@@ -276,11 +318,11 @@ class VelopCoordinator(DataUpdateCoordinator[HubSnapshot]):
             payload["client_mac"] = event.client_mac
         if event.data:
             payload.update(event.data)
-        # Client events belong to the node the client attached to or left.
+        # Events about a node belong to that node's device; the earlier hub-wide
+        # node events stay on the hub so existing automations keep matching.
         owner = (
             event.node_serial
-            if event.type in (EventType.CLIENT_JOINED, EventType.CLIENT_LEFT)
-            and event.node_serial
+            if event.node_serial and event.type not in HUB_OWNED_TYPES
             else self.identity.serial
         )
         registry = dr.async_get(self.hass)

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.ha_linksys_velop.const import (
@@ -1128,3 +1132,163 @@ async def test_entity_names_sort_in_priority_order(
             key=str.casefold,
         )
         assert controls[-1] == "Reboot"
+
+
+async def test_online_since_primary_uses_uptime(
+    hass: HomeAssistant,
+    mock_entry: MockConfigEntry,
+    emulator: Emulator,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """The hub's boot time comes from its uptime and stays steady."""
+    emulator.uptime_seconds = 90061
+    now = dt_util.utcnow().replace(microsecond=0)
+    coordinator = await _setup(hass, mock_entry)
+    boot = now - timedelta(seconds=90061)
+    state = hass.states.get("sensor.living_room_online_since")
+    assert dt_util.parse_datetime(state.state) == boot
+    assert hass.states.get("sensor.living_room_online_for").state == ("1 day 1 hour")
+    # Polling jitter does not move the time.
+    freezer.tick(61)
+    emulator.uptime_seconds = 90061 + 62
+    await _refresh(hass, coordinator)
+    assert (
+        dt_util.parse_datetime(hass.states.get("sensor.living_room_online_since").state)
+        == boot
+    )
+    assert hass.states.get("sensor.living_room_online_for").state == ("1 day 1 hour")
+    # A long time passing changes the text unit by unit.
+    freezer.tick(timedelta(days=7))
+    emulator.uptime_seconds += 7 * 86400 + 61
+    await _refresh(hass, coordinator)
+    assert hass.states.get("sensor.living_room_online_for").state == ("1 week 1 day")
+
+
+async def test_online_since_child_is_first_seen_and_resets_offline(
+    hass: HomeAssistant,
+    mock_entry: MockConfigEntry,
+    emulator: Emulator,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A child node reports no uptime: its time is when it was seen online."""
+    seen = dt_util.utcnow().replace(microsecond=0)
+    coordinator = await _setup(hass, mock_entry)
+    entity = "sensor.office_online_since"
+    assert dt_util.parse_datetime(hass.states.get(entity).state) == seen
+    freezer.tick(timedelta(hours=5, minutes=3))
+    await _refresh(hass, coordinator)
+    assert dt_util.parse_datetime(hass.states.get(entity).state) == seen
+    assert hass.states.get("sensor.office_online_for").state == "5 hours 3 minutes"
+
+    office = emulator.devices[2]
+    saved = office["connections"]
+    office["connections"] = []
+    await _refresh(hass, coordinator)
+    assert hass.states.get(entity).state == "unknown"
+    freezer.tick(60)
+    office["connections"] = saved
+    await _refresh(hass, coordinator)
+    assert dt_util.parse_datetime(hass.states.get(entity).state) == (
+        seen + timedelta(hours=5, minutes=4)
+    )
+
+
+async def test_online_since_without_uptime_falls_back(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Firmware that reports no uptime still gives the hub an online time."""
+    emulator.uptime_seconds = None
+    seen = dt_util.utcnow().replace(microsecond=0)
+    await _setup(hass, mock_entry)
+    state = hass.states.get("sensor.living_room_online_since")
+    assert dt_util.parse_datetime(state.state) == seen
+
+
+async def test_reboot_detected_and_boot_time_moves(
+    hass: HomeAssistant,
+    mock_entry: MockConfigEntry,
+    emulator: Emulator,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A smaller uptime fires node_rebooted on the hub's node device."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    before = hass.states.get("sensor.living_room_online_since").state
+    freezer.tick(600)
+    emulator.uptime_seconds = 20
+    await _refresh(hass, coordinator)
+    assert [e.data["type"] for e in events] == ["node_rebooted"]
+    assert events[0].data["node_serial"] == PRIMARY_SERIAL
+    hub = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, PRIMARY_SERIAL), mock_entry.entry_id
+    )
+    assert events[0].data["device_id"] == hub.id
+    assert hass.states.get("sensor.living_room_online_since").state != before
+    assert hass.states.get("sensor.living_room_online_for").state == "20 seconds"
+    node_events = hass.states.get("event.living_room_node_events")
+    assert node_events.attributes["event_type"] == "node_rebooted"
+    hub_events = hass.states.get("event.living_room_network_events")
+    assert hub_events.attributes["event_type"] == "node_rebooted"
+
+
+async def test_node_events_entity_per_node(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """Each node gets its own events; a node going offline stays on its node."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    for name in ("living_room", "bedroom", "office"):
+        assert hass.states.get(f"event.{name}_node_events") is not None
+    emulator.devices[2]["connections"] = []
+    await _refresh(hass, coordinator, 2)
+    assert [e.data["type"] for e in events] == ["node_offline"]
+    # Earlier automations keep matching: the bus event stays on the hub device.
+    hub = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, PRIMARY_SERIAL), mock_entry.entry_id
+    )
+    assert events[0].data["device_id"] == hub.id
+    assert events[0].data["node_name"] == "Office"
+    office = hass.states.get("event.office_node_events")
+    assert office.attributes["event_type"] == "node_offline"
+    assert office.attributes["node_serial"] == "12K10M33333333"
+    assert hass.states.get("event.bedroom_node_events").attributes["event_type"] is None
+    assert (
+        hass.states.get("event.living_room_network_events").attributes["event_type"]
+        == "node_offline"
+    )
+
+
+async def test_new_events_wan_ip_firmware_and_backhaul(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """WAN address, installed firmware and uplink type changes fire events."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.devices[1]["unit"]["firmwareVersion"] = "1.1.8.0"
+    emulator.backhaul[0]["connectionType"] = "Wired"
+    await _refresh(hass, coordinator, 2)
+    by_type = {e.data["type"]: e.data for e in events}
+    assert set(by_type) == {"node_firmware_updated", "node_backhaul_changed"}
+    bedroom = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, "12K10M22222222"), mock_entry.entry_id
+    )
+    assert by_type["node_firmware_updated"]["detail"] == "1.1.8.0"
+    assert by_type["node_firmware_updated"]["device_id"] == bedroom.id
+    assert by_type["node_backhaul_changed"]["detail"] == "wired"
+    assert hass.states.get("event.bedroom_node_events").attributes["event_type"] in (
+        "node_firmware_updated",
+        "node_backhaul_changed",
+    )
+
+
+async def test_wan_ip_change_event(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, emulator: Emulator
+) -> None:
+    """A new WAN address fires wan_ip_changed on the hub."""
+    events = _capture(hass)
+    coordinator = await _setup(hass, mock_entry)
+    emulator.wan_ip = "203.0.113.77"
+    await _refresh(hass, coordinator, 2)
+    assert [(e.data["type"], e.data["detail"]) for e in events] == [
+        ("wan_ip_changed", "203.0.113.77")
+    ]

@@ -234,7 +234,9 @@ async def test_fast_router(session: aiohttp.ClientSession, emulator: Emulator) -
         "nodes/setup/GetSelectedChannels",
         "healthcheck/GetHealthCheckStatus",
         "healthcheck/GetHealthCheckResults",
+        "diagnostics/GetSystemStats",
     ]
+    assert snap.uptime_seconds == 90061
     assert snap.channel_scan_running is False
     assert snap.speed_test is not None
     assert snap.speed_test.running is False
@@ -371,6 +373,7 @@ async def test_fast_tolerates_misc_failures() -> None:
             err("_ErrorUnknownAction"),
             err("Y"),
             err("Z"),
+            err("W"),
         ]
     )
     snap = await client.async_fetch_fast(IDENTITY)
@@ -379,12 +382,13 @@ async def test_fast_tolerates_misc_failures() -> None:
     assert snap.clients == ()
     assert snap.channel_scan_running is None
     assert snap.speed_test is None
+    assert snap.uptime_seconds is None
 
 
 async def test_fast_auth_in_any_position_raises() -> None:
     """An auth failure in any slot is fatal."""
-    for slot in range(6):
-        responses = [ok(), ok(), ok(), ok(), ok(), ok()]
+    for slot in range(7):
+        responses = [ok(), ok(), ok(), ok(), ok(), ok(), ok()]
         responses[slot] = err("_ErrorUnauthorized")
         client, _ = fake(transaction=responses)
         with pytest.raises(InvalidAuthError):

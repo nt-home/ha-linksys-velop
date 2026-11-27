@@ -4,6 +4,23 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-27
+
+### Added
+
+- **Online since** timestamp sensor and **Online for** text sensor on every node; **Online for** changes unit with the size of the value (seconds, minutes, hours, days, weeks, months, years)
+- Boot time of the hub worked out from the `uptimeSeconds` value of `diagnostics/GetSystemStats`, kept steady against polling jitter; a child node uses the time Home Assistant last saw it come online because the router reports no uptime for it
+- **Node events** event entity on every node that repeats that node's online, offline, firmware and reboot events
+- `node_rebooted`, `node_firmware_updated`, `node_backhaul_changed` and `wan_ip_changed` event types on the hub **Network events** entity and the `ha_linksys_velop_event` bus event
+- Plain-language duration helper and tests for the new sensors, events, mapper, client and emulator uptime
+
+### Changed
+
+- Fetch `diagnostics/GetSystemStats` in the fast refresh as well, to read the hub uptime
+- The bus event of the new node event types carries the node's device as `device_id`; earlier node events keep the hub as `device_id`
+- Bump the integration version to 1.1.0
+- Update the README for the new sensors and events
+
 ## [1.0.0] - 2026-11-27
 
 First stable release.
@@ -135,7 +152,8 @@ First stable release.
 - `reboot_node` and `refresh_now` actions, redacted diagnostics, repair issue for locked admin accounts.
 - Emulated JNAP router test harness (router mode, bridge mode, self-signed HTTPS, failure modes).
 
-[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/nt-home/ha-linksys-velop/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/nt-home/ha-linksys-velop/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.1...v1.0.0
 [0.5.1]: https://github.com/nt-home/ha-linksys-velop/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nt-home/ha-linksys-velop/compare/v0.4.0...v0.5.0
